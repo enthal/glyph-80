@@ -30,6 +30,7 @@ When a sub-project directory has its own `CLAUDE.md`, that file is canonical for
 
 ## Git protocol
 
+- **Commit messages follow [Conventional Commits v1.0.0](https://www.conventionalcommits.org/en/v1.0.0/).** Every commit subject is `<type>[optional scope]: <description>`, where `type` is one of `feat`, `fix`, `build`, `chore`, `ci`, `docs`, `style`, `refactor`, `perf`, `test`. Use a scope (usually the sub-project) when it helps: `feat(fontspace): …`. A breaking change is marked with `!` after the type/scope (`feat(fontspace)!: …`) and/or a `BREAKING CHANGE:` footer. This is required, not a preference — it governs how history reads and enables tooling.
 - **Never commit directly to `main`** (except the initial repo-setup commit). All changes land via a feature branch → PR → squash merge.
 - **Branch naming:** `<kind>/<slug>` where `kind` is one of `feat`, `fix`, `refactor`, `spec`, `chore`, `test`. Dashes in the slug, not underscores. Examples: `feat/fontspace-editor`, `chore/repo-setup`.
 - **Start the branch first**, from an up-to-date `main`: `git switch -c <kind>/<slug>`. If you catch yourself having already committed on local `main`: `git switch -c <kind>/<slug>` (takes the commits with you), then `git switch main && git reset --hard origin/main`.
