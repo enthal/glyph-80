@@ -1,0 +1,29 @@
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+*.swp
+*~
+.idea/
+*.iml
+
+# Local, machine-specific editor settings (keep shared .vscode intentionally if added)
+.vscode/*.local
+
+# Rust (FontSpace and any other Rust sub-projects)
+# Note: Cargo.lock IS committed for binary/application crates — do not ignore it.
+target/
+**/target/
+
+# Firmware / ROM build artifacts (generated EEPROM/ROM images, assembler output)
+# Keep source (asm, microcode tables, font definitions); ignore generated binaries.
+*.bin
+*.hex
+*.rom
+*.eep
+build/
+**/build/
+
+# Logs and scratch
+*.log
+scratch/
+tmp/
