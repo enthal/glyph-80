@@ -12,7 +12,10 @@
 //! geometry/stroke math added by later slices), not in `egui` paint closures.
 
 pub mod app;
+pub mod editor;
 pub mod layout;
+pub mod state;
 
 pub use app::FontSpaceApp;
 pub use layout::{Pane, default_tree, panes_in};
+pub use state::{AppState, Selection};

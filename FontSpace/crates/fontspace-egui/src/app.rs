@@ -7,19 +7,21 @@
 
 use egui_tiles::{Tile, Tree};
 
+use crate::editor::show_glyph_editor;
 use crate::layout::{Pane, default_tree, panes_in};
+use crate::state::AppState;
 
 /// The FontSpace desktop application.
 pub struct FontSpaceApp {
     tree: Tree<Pane>,
-    behavior: TreeBehavior,
+    state: AppState,
 }
 
 impl Default for FontSpaceApp {
     fn default() -> Self {
         Self {
             tree: default_tree(),
-            behavior: TreeBehavior,
+            state: AppState::default(),
         }
     }
 }
@@ -30,6 +32,15 @@ impl FontSpaceApp {
     /// persistence) in later Milestone-2 slices (spec/18).
     pub fn new(_cc: &eframe::CreationContext<'_>) -> Self {
         Self::default()
+    }
+
+    /// Builds the app around an explicit [`AppState`] — used by snapshot tests to
+    /// wire a deterministic (sequential-id) document (spec/15 §15.6).
+    pub fn with_state(state: AppState) -> Self {
+        Self {
+            tree: default_tree(),
+            state,
+        }
     }
 
     /// The panes currently laid out. Exposed for tests of shell-level commands.
@@ -67,8 +78,12 @@ impl FontSpaceApp {
             });
         });
 
+        // Split the borrow so the tiles behavior can hold `&state` while `tree` is
+        // driven mutably (disjoint fields of `self`).
+        let Self { tree, state } = self;
+        let mut behavior = PaneBehavior { state };
         egui::CentralPanel::default().show(ui, |ui| {
-            self.tree.ui(&mut self.behavior, ui);
+            tree.ui(&mut behavior, ui);
         });
     }
 }
@@ -86,11 +101,13 @@ fn focus_pane(tree: &mut Tree<Pane>, target: Pane) {
     tree.make_active(|_id, tile| matches!(tile, Tile::Pane(pane) if *pane == target));
 }
 
-/// Renders panes. Every pane is a placeholder in this shell slice; the real widgets
-/// (glyph editor, page overview, …) land in the following Milestone-2 slices.
-struct TreeBehavior;
+/// Renders panes, reading the shared [`AppState`]. The glyph editor is live; the
+/// other views are placeholders until their Milestone-2 slices land.
+struct PaneBehavior<'a> {
+    state: &'a AppState,
+}
 
-impl egui_tiles::Behavior<Pane> for TreeBehavior {
+impl egui_tiles::Behavior<Pane> for PaneBehavior<'_> {
     fn tab_title_for_pane(&mut self, pane: &Pane) -> egui::WidgetText {
         pane.title().into()
     }
@@ -101,18 +118,26 @@ impl egui_tiles::Behavior<Pane> for TreeBehavior {
         _tile_id: egui_tiles::TileId,
         pane: &mut Pane,
     ) -> egui_tiles::UiResponse {
-        ui.vertical(|ui| {
-            ui.add_space(8.0);
-            ui.heading(pane.title());
-            ui.add_space(4.0);
-            ui.label(
-                egui::RichText::new("(view arrives in a later Milestone-2 slice)")
-                    .weak()
-                    .italics(),
-            );
-        });
+        match pane {
+            Pane::GlyphEditor => show_glyph_editor(ui, self.state),
+            other => placeholder(ui, *other),
+        }
         egui_tiles::UiResponse::None
     }
+}
+
+/// A titled "coming soon" placeholder for views not yet implemented.
+fn placeholder(ui: &mut egui::Ui, pane: Pane) {
+    ui.vertical(|ui| {
+        ui.add_space(8.0);
+        ui.heading(pane.title());
+        ui.add_space(4.0);
+        ui.label(
+            egui::RichText::new("(view arrives in a later Milestone-2 slice)")
+                .weak()
+                .italics(),
+        );
+    });
 }
 
 #[cfg(test)]
