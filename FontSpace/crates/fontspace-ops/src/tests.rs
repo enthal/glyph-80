@@ -883,9 +883,18 @@ fn recode_finds_orphans_on_every_page() {
 #[test]
 fn remove_entry_cascade_deletes_glyphs_across_pages_and_undo_restores() {
     let mut f = fixture();
-    // Draw a second 0x41 glyph on the Bold page (distinct pattern) so the cascade
-    // must reach both pages and restore each exactly.
     let size = f.doc.glyph_sets[0].glyph_size;
+    // Rebuild the Regular page so 0x41 sits at index 1 — with neighbours 0x42 before
+    // and 0x43 after — so exact-index restoration is actually exercised (not index 0).
+    f.doc.glyph_sets[0].pages[0].glyphs.clear();
+    for (code, x) in [(0x42u32, 0u16), (0x41, 1), (0x43, 2)] {
+        let mut b = Bitmap::new_blank(size);
+        b.set(x, 0, true).unwrap();
+        f.doc.glyph_sets[0].pages[0]
+            .glyphs
+            .push(Glyph { code, bitmap: b });
+    }
+    // A second 0x41 on the Bold page, so the cascade must reach both pages.
     let mut bold_a = Bitmap::new_blank(size);
     bold_a.set(7, 7, true).unwrap();
     f.doc.glyph_sets[0].pages[1].glyphs.push(Glyph {
