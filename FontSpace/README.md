@@ -3,7 +3,7 @@
 FontSpace is a desktop application **and** a reusable Rust core for designing, organizing, transforming, comparing, rendering, and exporting monospaced raster fonts. It is the first sub-project of [Glyph-80](../README.md) — the tool that produces the glyph bitmaps the later hardware phases display.
 
 - **Design docs:** [SPEC.md](SPEC.md) is the table of contents; each chapter under [spec/](spec/) is canonical for its area. Start with [spec/17-invariants-and-glossary.md](spec/17-invariants-and-glossary.md).
-- **Milestones:** [PLAN.md](PLAN.md). The repo is currently at **Milestone 0 — workspace bootstrap**: the crates exist and build, but the domain model, CLI, and GUI are not implemented yet.
+- **Milestones:** [PLAN.md](PLAN.md). **Milestone 1** (core model, JSON, operations, rendering, and the `fontspace` CLI) is complete; **Milestone 2** — the single-document editor GUI (`fontspace-egui`) — is now underway, starting with the tiled application shell.
 - **Contributor/agent guide:** [CLAUDE.md](CLAUDE.md).
 
 ## Requirements
@@ -34,7 +34,13 @@ cargo run -p fontspace-cli -- render-text demo.fontspace.json --glyph-set "Termi
 cargo run -p fontspace-cli -- shift demo.fontspace.json --glyph-set "Terminal 8x16" --pages Regular --glyphs A-Z --dx 1 --dy 0 --dry-run
 ```
 
-Mutating commands (`set-pixels`, `shift`) write canonical JSON atomically and support `--dry-run`; `--seq` wires the deterministic id generator for reproducible fixtures. (`extract` and machine-readable JSON errors arrive with later milestones; the GUI, `fontspace-egui`, lands in Milestone 2.)
+Mutating commands (`set-pixels`, `shift`) write canonical JSON atomically and support `--dry-run`; `--seq` wires the deterministic id generator for reproducible fixtures. (`extract` and machine-readable JSON errors arrive with later milestones.)
+
+The **GUI** (`fontspace-gui`, from `fontspace-egui`) is landing over Milestone 2. It currently opens the tiled application shell — the `egui_tiles` workspace with the default layout (documents · glyph editor · char-set/pages/preview tabs · inspector), plus **reset-to-default-layout** and **focus-glyph-editor** commands. The editor widgets themselves arrive in the following Milestone-2 slices.
+
+```sh
+cargo run -p fontspace-egui               # open the desktop shell
+```
 
 ## Git pre-commit hook
 
