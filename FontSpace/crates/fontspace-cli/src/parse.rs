@@ -21,6 +21,8 @@ pub enum ParseError {
     GlyphSetNotFound(String),
     #[error("glyph set name {name:?} is ambiguous ({count} match)")]
     AmbiguousGlyphSet { name: String, count: usize },
+    #[error("choose only one render subject: --glyphs, --text, or --text-nl")]
+    RenderSubjectConflict,
 }
 
 /// A single pixel assignment parsed from `X,Y,VALUE`.
@@ -170,6 +172,50 @@ pub fn resolve_glyph_set(doc: &FontSpace, name: &str) -> Result<GlyphSetId, Pars
     Ok(first.id)
 }
 
+/// What `render-text` should draw: either a set-selection of glyph codes (the
+/// `--glyphs` selector, or *all* codes by default) or an ordered run of text lines
+/// (`--text` / `--text-nl`). These are mutually exclusive (spec/13.1).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RenderSubject {
+    Glyphs(GlyphSelector),
+    Text(Vec<Vec<u32>>),
+}
+
+/// Maps an input string to a single line of character `code`s: each `char`'s Unicode
+/// scalar (equal to the 8-bit code for Latin-1 input). Repeats are preserved;
+/// filtering of codes with no character-set entry happens at render time.
+pub fn text_to_rows(text: &str) -> Vec<Vec<u32>> {
+    vec![text.chars().map(|c| c as u32).collect()]
+}
+
+/// Like [`text_to_rows`], but a newline (`U+000A`) starts a new line instead of
+/// mapping to a code. `"AB\nC"` → two lines `[AB]`, `[C]`.
+pub fn text_nl_to_rows(text: &str) -> Vec<Vec<u32>> {
+    text.split('\n')
+        .map(|line| line.chars().map(|c| c as u32).collect())
+        .collect()
+}
+
+/// Resolves the single render subject from the three mutually-exclusive flags,
+/// defaulting to *all glyphs* when none is given (spec/13.1). Errors if more than
+/// one is supplied.
+pub fn resolve_render_subject(
+    glyphs: Option<&str>,
+    text: Option<&str>,
+    text_nl: Option<&str>,
+) -> Result<RenderSubject, ParseError> {
+    let count = glyphs.is_some() as u8 + text.is_some() as u8 + text_nl.is_some() as u8;
+    if count > 1 {
+        return Err(ParseError::RenderSubjectConflict);
+    }
+    match (glyphs, text, text_nl) {
+        (_, Some(t), _) => Ok(RenderSubject::Text(text_to_rows(t))),
+        (_, _, Some(t)) => Ok(RenderSubject::Text(text_nl_to_rows(t))),
+        (Some(g), _, _) => Ok(RenderSubject::Glyphs(parse_glyph_selector(g)?)),
+        (None, None, None) => Ok(RenderSubject::Glyphs(GlyphSelector::All)),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -263,5 +309,51 @@ mod tests {
         assert!(parse_pixel("3,2").is_err());
         assert!(parse_pixel("3,2,maybe").is_err());
         assert!(parse_pixel("3,2,1,4").is_err());
+    }
+
+    #[test]
+    fn text_rows_map_chars_to_codes_and_keep_repeats() {
+        assert_eq!(text_to_rows("AAB"), vec![vec![0x41, 0x41, 0x42]]);
+        // A plain newline is an ordinary char here (code 0x0A), not a line break.
+        assert_eq!(text_to_rows("A\nB"), vec![vec![0x41, 0x0A, 0x42]]);
+    }
+
+    #[test]
+    fn text_nl_rows_break_on_newline() {
+        assert_eq!(text_nl_to_rows("AB\nC"), vec![vec![0x41, 0x42], vec![0x43]]);
+        // A trailing newline yields a trailing empty line.
+        assert_eq!(text_nl_to_rows("A\n"), vec![vec![0x41], vec![]]);
+    }
+
+    #[test]
+    fn render_subject_defaults_to_all_glyphs() {
+        assert_eq!(
+            resolve_render_subject(None, None, None).unwrap(),
+            RenderSubject::Glyphs(GlyphSelector::All)
+        );
+    }
+
+    #[test]
+    fn render_subject_from_text_flags() {
+        assert_eq!(
+            resolve_render_subject(None, Some("Hi"), None).unwrap(),
+            RenderSubject::Text(vec![vec![0x48, 0x69]])
+        );
+        assert_eq!(
+            resolve_render_subject(None, None, Some("A\nB")).unwrap(),
+            RenderSubject::Text(vec![vec![0x41], vec![0x42]])
+        );
+    }
+
+    #[test]
+    fn render_subject_rejects_multiple_subjects() {
+        assert_eq!(
+            resolve_render_subject(Some("A-Z"), Some("Hi"), None),
+            Err(ParseError::RenderSubjectConflict)
+        );
+        assert_eq!(
+            resolve_render_subject(None, Some("Hi"), Some("Yo")),
+            Err(ParseError::RenderSubjectConflict)
+        );
     }
 }

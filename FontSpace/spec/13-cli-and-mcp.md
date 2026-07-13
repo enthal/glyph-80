@@ -13,12 +13,23 @@ fontspace render-text file.fontspace.json \
   --glyph-set "Terminal 8x16" --page Regular \
   --glyphs 0x20-0x7E --on "##" --off "  "
 
+fontspace render-text file.fontspace.json \
+  --glyph-set "Terminal 8x16" --text-nl "Hello\nWorld"
+
 fontspace extract file.fontspace.json \
   --glyph-set "Terminal 8x16" --pages Regular,Bold \
   --glyphs A-Z --output fragment.json
 ```
 
-Glyph ranges accept characters (`A-Z`), decimal, or `0x` hex codes, resolved via the referenced character set. Requirements:
+Glyph ranges accept characters (`A-Z`), decimal, or `0x` hex codes, resolved via the referenced character set.
+
+**`render-text` subjects.** The subject is exactly one of three mutually-exclusive forms; supplying more than one is an error:
+
+- `--glyphs <selector>` — a code selector as above. **Omitting it renders all glyphs** (the character set's full entry order).
+- `--text <string>` — render the string as one line. Each input character maps to an 8-bit `code` (its Unicode scalar, equal to the byte for Latin-1 input); repeats are fine. Characters with no character-set entry are **ignored** (§9.2.1); a defined-but-blank character (e.g. a space) still occupies its cell.
+- `--text-nl <string>` — like `--text`, but a newline codepoint starts a new line rather than mapping to a glyph.
+
+Requirements:
 
 - optional machine-readable (JSON) error output;
 - `--dry-run` for mutating operations (prints the resulting `ChangeSet` summary, writes nothing);

@@ -19,11 +19,11 @@ use fontspace_ops::{
     ChangeSet, FontSpaceError, GlyphRef, PixelEdit, SetPixels, ShiftGlyphs, resolve_pages_in,
     set_pixels, shift_glyphs,
 };
-use fontspace_render::{TextGridRequest, render_text_grid};
+use fontspace_render::{TextGridRequest, TextStringRequest, render_text_grid, render_text_string};
 
 use parse::{
-    ParseError, parse_code_token, parse_glyph_selector, parse_layout, parse_overflow,
-    parse_page_selector, parse_pixel, resolve_glyph_set,
+    ParseError, RenderSubject, parse_code_token, parse_glyph_selector, parse_layout,
+    parse_overflow, parse_page_selector, parse_pixel, resolve_glyph_set, resolve_render_subject,
 };
 
 #[derive(Parser)]
@@ -85,15 +85,27 @@ enum Command {
         #[arg(long, default_value = "discard")]
         overflow: String,
     },
-    /// Render selected glyphs as a text grid to stdout.
+    /// Render glyphs as a text grid to stdout. The render subject is one of
+    /// `--glyphs` (a code selector; defaults to *all* glyphs), `--text` (an input
+    /// string rendered as one line), or `--text-nl` (like `--text`, but a newline
+    /// starts a new line). At most one may be given. For `--text`/`--text-nl`,
+    /// input characters map to 8-bit codes and characters with no character-set
+    /// entry are ignored.
     RenderText {
         path: PathBuf,
         #[arg(long)]
         glyph_set: String,
         #[arg(long, default_value = "all")]
         pages: String,
+        /// A glyph code selector (e.g. `A-Z`, `0x20-0x7E`). Defaults to all glyphs.
         #[arg(long)]
-        glyphs: String,
+        glyphs: Option<String>,
+        /// Render this string as one line of text.
+        #[arg(long)]
+        text: Option<String>,
+        /// Render this string, starting a new line at each newline codepoint.
+        #[arg(long = "text-nl")]
+        text_nl: Option<String>,
         #[arg(long, default_value = "#")]
         on: String,
         #[arg(long, default_value = ".")]
@@ -244,6 +256,8 @@ fn run(cli: Cli) -> Result<(), CliError> {
             glyph_set,
             pages,
             glyphs,
+            text,
+            text_nl,
             on,
             off,
             glyph_separator,
@@ -253,22 +267,44 @@ fn run(cli: Cli) -> Result<(), CliError> {
         } => {
             let doc = load_document(&path)?;
             let glyph_set_id = resolve_glyph_set(&doc, &glyph_set)?;
-            let output = render_text_grid(
-                &doc,
-                &TextGridRequest {
-                    glyph_set_id,
-                    pages: parse_page_selector(&pages),
-                    glyphs: parse_glyph_selector(&glyphs)?,
-                    on,
-                    off,
-                    glyph_separator,
-                    row_separator: "\n".to_string(),
-                    page_separator: "\n\n".to_string(),
-                    layout: parse_layout(&layout)?,
-                    scale_x,
-                    scale_y,
-                },
-            )?;
+            let pages = parse_page_selector(&pages);
+            let subject =
+                resolve_render_subject(glyphs.as_deref(), text.as_deref(), text_nl.as_deref())?;
+            let output = match subject {
+                RenderSubject::Glyphs(glyphs) => render_text_grid(
+                    &doc,
+                    &TextGridRequest {
+                        glyph_set_id,
+                        pages,
+                        glyphs,
+                        on,
+                        off,
+                        glyph_separator,
+                        row_separator: "\n".to_string(),
+                        page_separator: "\n\n".to_string(),
+                        layout: parse_layout(&layout)?,
+                        scale_x,
+                        scale_y,
+                    },
+                )?,
+                // --text / --text-nl: an ordered run of characters; `layout` does not
+                // apply (text is always a left-to-right, top-to-bottom run).
+                RenderSubject::Text(rows) => render_text_string(
+                    &doc,
+                    &TextStringRequest {
+                        glyph_set_id,
+                        pages,
+                        rows,
+                        on,
+                        off,
+                        glyph_separator,
+                        row_separator: "\n".to_string(),
+                        page_separator: "\n\n".to_string(),
+                        scale_x,
+                        scale_y,
+                    },
+                )?,
+            };
             println!("{output}");
             Ok(())
         }
