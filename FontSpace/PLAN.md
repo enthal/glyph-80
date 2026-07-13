@@ -13,12 +13,13 @@ This plan turns [SPEC.md](SPEC.md) into an ordered sequence of shippable milesto
 
 Goal: an empty but disciplined Cargo workspace.
 
-- `FontSpace/Cargo.toml` virtual workspace; empty `fontspace-model` and `fontspace-cli` crates; `#![forbid(unsafe_code)]` in each.
-- `rust-toolchain.toml` (pin stable), `rustfmt.toml`, `.gitignore` already covers `target/`.
-- **Pre-commit hook** ([spec/19](spec/19-ci-and-hooks.md) §19.2): git hooks are repo-global, so establish a **repo-root** dispatcher (recommended: `lefthook` with `glob: "FontSpace/**"`, or a hand-rolled `core.hooksPath` dispatcher) — a repo-level, one-time setup since FontSpace is the first sub-project. FontSpace contributes `FontSpace/scripts/precommit.sh` running `fmt` + `clippy` + the markdown no-hardwrap lint (not the test suite), invoked when `FontSpace/**` is staged. Also add a one-line note to the repo-root [../CLAUDE.md](../CLAUDE.md) that the hook mechanism lives at the root.
-- **CI workflow** ([spec/19](spec/19-ci-and-hooks.md) §19.3): `.github/workflows/fontspace-ci.yml`, path-filtered to `FontSpace/**`, with jobs `fmt` (ubuntu), `clippy` + `test` on a **macOS + Linux matrix** (so the `cfg`-gated platform code in chapter 18 is actually checked), and `markdown`. Cache cargo; pin toolchain.
-- **Branch protection** ([spec/19](spec/19-ci-and-hooks.md) §19.4): once CI runs, add the six required contexts (`fontspace / fmt`, `fontspace / clippy (…)` ×2, `fontspace / test (…)` ×2, `fontspace / markdown`) to the `main` rule — this closes the item deferred at repo setup. Note the monorepo path-filter gotcha (§19.5) for when a second sub-project lands.
-- Definition of done: `cargo build/test/clippy/fmt` succeed on an empty tree; CI is green on the matrix; the hook installs and blocks a mis-formatted commit.
+- [ ] `FontSpace/Cargo.toml` virtual workspace; empty `fontspace-model` and `fontspace-cli` crates; `#![forbid(unsafe_code)]` in each.
+- [ ] `rust-toolchain.toml` (pin stable), `rustfmt.toml`, `.gitignore` already covers `target/`.
+- [ ] **Pre-commit hook** ([spec/19](spec/19-ci-and-hooks.md) §19.2): git hooks are repo-global, so establish a **repo-root** dispatcher (recommended: `lefthook` with `glob: "FontSpace/**"`, or a hand-rolled `core.hooksPath` dispatcher) — a repo-level, one-time setup since FontSpace is the first sub-project. FontSpace contributes `FontSpace/scripts/precommit.sh` running `fmt` + `clippy` + the markdown no-hardwrap lint (not the test suite), invoked when `FontSpace/**` is staged. Also add a one-line note to the repo-root [../CLAUDE.md](../CLAUDE.md) that the hook mechanism lives at the root.
+- [ ] **CI workflow** ([spec/19](spec/19-ci-and-hooks.md) §19.3): `.github/workflows/fontspace-ci.yml`, path-filtered to `FontSpace/**`, with jobs `fmt` (ubuntu), `clippy` + `test` on a **macOS + Linux matrix** (so the `cfg`-gated platform code in chapter 18 is actually checked), and `markdown`. Cache cargo; pin toolchain.
+- [ ] **Branch protection** ([spec/19](spec/19-ci-and-hooks.md) §19.4): once CI runs, add the six required contexts (`fontspace / fmt`, `fontspace / clippy (…)` ×2, `fontspace / test (…)` ×2, `fontspace / markdown`) to the `main` rule — this closes the item deferred at repo setup. Note the monorepo path-filter gotcha (§19.5) for when a second sub-project lands.
+
+Definition of done: `cargo build/test/clippy/fmt` succeed on an empty tree; CI is green on the matrix; the hook installs and blocks a mis-formatted commit.
 
 ## Milestone 1 — Core model, JSON, and CLI (no GUI)
 
@@ -28,14 +29,14 @@ Crates: `fontspace-model`, `fontspace-ops`, `fontspace-json`, `fontspace-render`
 
 Steps:
 
-1. **Value types + IDs + injection** — `GlyphSize`, typed IDs, `IdGen`/`RandomIdGen`/`SequentialIdGen`, `Rgba`, `Limits` ([spec/03](spec/03-domain-model.md), [spec/16](spec/16-performance-safety-limits.md)).
-2. **`Bitmap`** — packing, padding-bit invariant, get/set/toggle/clear/is_blank/count_on, pure `shifted`/`flipped`/`inverted` ([spec/05](spec/05-glyphs-and-bitmaps.md)). *Strict tests first, incl. odd widths.*
-3. **Character sets** — `CharacterEntry { code, label }`, `code`-uniqueness, ordering, ASCII preset op ([spec/04](spec/04-character-sets.md)).
-4. **Glyph sets, pages, glyphs, guides** — sparse pages keyed by `code`, `glyph_by_code`, referential-integrity/uniqueness validation ([spec/03](spec/03-domain-model.md), [spec/04](spec/04-character-sets.md)).
-5. **JSON layer** — storage structs, visual-row parse/format, canonical writer (deterministic), blank pruning, `format_version` dispatch, migration scaffold. *Round-trip + `save(load(save))==save` + golden tests* ([spec/06](spec/06-json-persistence.md), [spec/15](spec/15-testing.md)).
-6. **Operations + selectors + change sets** — `SetPixels`, `ShiftGlyphs`, `ClearGlyphs`, `InvertGlyphs`, page ops, guide ops, and the character-set edit ops incl. **remove-cascade** and **recode-warn**; atomic apply; invertible `ChangeSet` ([spec/07](spec/07-operations.md)). *Strict tests for cascade + inversion.*
-7. **Text-grid render** ([spec/09](spec/09-rendering.md)).
-8. **CLI** — `new`, `info`, `set-pixels`, `shift`, `render-text`, `extract`; atomic writes; `--dry-run`; JSON errors ([spec/13](spec/13-cli-and-mcp.md)).
+- [ ] **Value types + IDs + injection** — `GlyphSize`, typed IDs, `IdGen`/`RandomIdGen`/`SequentialIdGen`, `Rgba`, `Limits` ([spec/03](spec/03-domain-model.md), [spec/16](spec/16-performance-safety-limits.md)).
+- [ ] **`Bitmap`** — packing, padding-bit invariant, get/set/toggle/clear/is_blank/count_on, pure `shifted`/`flipped`/`inverted` ([spec/05](spec/05-glyphs-and-bitmaps.md)). *Strict tests first, incl. odd widths.*
+- [ ] **Character sets** — `CharacterEntry { code, label }`, `code`-uniqueness, ordering, ASCII preset op ([spec/04](spec/04-character-sets.md)).
+- [ ] **Glyph sets, pages, glyphs, guides** — sparse pages keyed by `code`, `glyphs_by_code`, referential-integrity/uniqueness validation ([spec/03](spec/03-domain-model.md), [spec/04](spec/04-character-sets.md)).
+- [ ] **JSON layer** — storage structs, visual-row parse/format, canonical writer (deterministic), blank pruning, `format_version` dispatch, migration scaffold. *Round-trip + `save(load(save))==save` + golden tests* ([spec/06](spec/06-json-persistence.md), [spec/15](spec/15-testing.md)).
+- [ ] **Operations + selectors + change sets** — `SetPixels`, `ShiftGlyphs`, `ClearGlyphs`, `InvertGlyphs`, page ops, guide ops, and the character-set edit ops incl. **remove-cascade** and **recode-warn**; atomic apply; invertible `ChangeSet` ([spec/07](spec/07-operations.md)). *Strict tests for cascade + inversion.*
+- [ ] **Text-grid render** ([spec/09](spec/09-rendering.md)).
+- [ ] **CLI** — `new`, `info`, `set-pixels`, `shift`, `render-text`, `extract`; atomic writes; `--dry-run`; JSON errors ([spec/13](spec/13-cli-and-mcp.md)).
 
 Definition of done: the Milestone-1 integration test (create → edit → save → reopen → render, via library and CLI, byte-identical) passes; property tests green; a committed golden ASCII document diffs cleanly.
 
@@ -47,15 +48,15 @@ Crate: `fontspace-egui` (+ `fontspace-render` image output).
 
 Steps:
 
-1. App shell + `egui_tiles` scaffold + default layout + reset-to-default ([spec/12](spec/12-gui.md)).
-2. **Glyph editor widget** — square-cell layout math, grid levels, guides overlay, hover; **pure** stroke/interpolation/cell-size functions with unit tests ([spec/12](spec/12-gui.md) §12.3–12.4).
-3. **First-pixel-determines-stroke** editing → one `SetPixels` per drag → one undo entry; live tentative stroke.
-4. Undo/redo (workspace-level stack, single doc for now) ([spec/07](spec/07-operations.md)).
-5. Page overview; character-set view (with pre-apply impact for remove/recode); guides UI.
-6. Text preview (image render) ([spec/09](spec/09-rendering.md)).
-7. Open/Save/Save As/Revert with atomic writes; dirty tracking.
-8. **Platform identity + Linux desktop integration** ([spec/18](spec/18-platform-support.md)): `APP_ID`/storage-namespace constants, embedded `assets/app_icon.png` → window icon, `with_app_id`, the self-installing `.desktop`+icon (Exec-resolves / AppImage / `StartupWMClass` / `update-desktop-database`), and the `cursor_env` re-exec bridge. Port Termica's pure helpers (`desktop_entry_contents`, `desktop_exec_field`, `resolve_exec_path`) with their unit tests, plus the `APP_ID == packager identifier` test.
-9. `egui_kittest` snapshots for editor, page overview, preview; snapshot review.
+- [ ] App shell + `egui_tiles` scaffold + default layout + reset-to-default ([spec/12](spec/12-gui.md)).
+- [ ] **Glyph editor widget** — square-cell layout math, grid levels, guides overlay, hover; **pure** stroke/interpolation/cell-size functions with unit tests ([spec/12](spec/12-gui.md) §12.3–12.4).
+- [ ] **First-pixel-determines-stroke** editing → one `SetPixels` per drag → one undo entry; live tentative stroke.
+- [ ] Undo/redo (workspace-level stack, single doc for now) ([spec/07](spec/07-operations.md)).
+- [ ] Page overview; character-set view (with pre-apply impact for remove/recode); guides UI.
+- [ ] Text preview (image render) ([spec/09](spec/09-rendering.md)).
+- [ ] Open/Save/Save As/Revert with atomic writes; dirty tracking.
+- [ ] **Platform identity + Linux desktop integration** ([spec/18](spec/18-platform-support.md)): `APP_ID`/storage-namespace constants, embedded `assets/app_icon.png` → window icon, `with_app_id`, the self-installing `.desktop`+icon (Exec-resolves / AppImage / `StartupWMClass` / `update-desktop-database`), and the `cursor_env` re-exec bridge. Port Termica's pure helpers (`desktop_entry_contents`, `desktop_exec_field`, `resolve_exec_path`) with their unit tests, plus the `APP_ID == packager identifier` test.
+- [ ] `egui_kittest` snapshots for editor, page overview, preview; snapshot review.
 
 Definition of done: draw a glyph, undo/redo the whole stroke, add guides, view a page, preview text, save and reopen — all through the GUI; on Linux the window carries our icon and the app appears in the launcher.
 
@@ -65,12 +66,12 @@ Goal: many files open; copy/move across them; session restore. (Criteria 2, 12, 
 
 Steps:
 
-1. `OpenDocument`/`DocumentId`; multiple documents; document browser tree ([spec/11](spec/11-workspace.md), [spec/12](spec/12-gui.md) §12.2).
-2. Fragments + `extract`/`paste` ops with explicit `GlyphMapping`/`PageMapping`/`GlyphSizeConversion` ([spec/08](spec/08-fragments-and-clipboard.md)).
-3. Clipboard integration (custom fragment MIME + `text/plain` + `image/png`); cross-instance paste.
-4. Cross-document `WorkspaceTransaction` (move A→B undoes both sides).
-5. Workspace persistence: stable doc keys, tile layout, selections, bindings; debounced atomic save; restore-on-startup incl. binding remap ([spec/11](spec/11-workspace.md)).
-6. Preferences scope (theme, colors, recent paths).
+- [ ] `OpenDocument`/`DocumentId`; multiple documents; document browser tree ([spec/11](spec/11-workspace.md), [spec/12](spec/12-gui.md) §12.2).
+- [ ] Fragments + `extract`/`paste` ops with explicit `GlyphMapping`/`PageMapping`/`GlyphSizeConversion` ([spec/08](spec/08-fragments-and-clipboard.md)).
+- [ ] Clipboard integration (custom fragment MIME + `text/plain` + `image/png`); cross-instance paste.
+- [ ] Cross-document `WorkspaceTransaction` (move A→B undoes both sides).
+- [ ] Workspace persistence: stable doc keys, tile layout, selections, bindings; debounced atomic save; restore-on-startup incl. binding remap ([spec/11](spec/11-workspace.md)).
+- [ ] Preferences scope (theme, colors, recent paths).
 
 Definition of done: open two files, copy a page and a code range between them with undo, restart, and see layout + selections + a cross-document comparison restored.
 
@@ -80,11 +81,11 @@ Goal: the visualization features that make it a design tool. (Criterion 10; deep
 
 Steps:
 
-1. Character-across-pages/files comparison tile: synchronized zoom, source labels, overlay/difference, copy-across ([spec/12](spec/12-gui.md) §12.9).
-2. Page-overview selection operations (shift/clear/invert on a range); range copy/paste.
-3. Text-preview presets and multi-page mode; missing-glyph policy.
-4. Inspector for glyph/page (export inspector arrives with M5).
-5. **Menu system** ([spec/18](spec/18-platform-support.md) §18.3–18.4): the one command-registry tree; the in-window `egui` presenter; the native macOS `NSMenu` presenter (`muda`) with winit default-menu suppression, creator-callback install timing, `Box::leak` lifetime, and `MenuEvent` routing for the full menu bar; keyboard bindings kept in sync with the native accelerators; "focus glyph editor"; named-layout groundwork.
+- [ ] Character-across-pages/files comparison tile: synchronized zoom, source labels, overlay/difference, copy-across ([spec/12](spec/12-gui.md) §12.9).
+- [ ] Page-overview selection operations (shift/clear/invert on a range); range copy/paste.
+- [ ] Text-preview presets and multi-page mode; missing-glyph policy.
+- [ ] Inspector for glyph/page (export inspector arrives with M5).
+- [ ] **Menu system** ([spec/18](spec/18-platform-support.md) §18.3–18.4): the one command-registry tree; the in-window `egui` presenter; the native macOS `NSMenu` presenter (`muda`) with winit default-menu suppression, creator-callback install timing, `Box::leak` lifetime, and `MenuEvent` routing for the full menu bar; keyboard bindings kept in sync with the native accelerators; "focus glyph editor"; named-layout groundwork.
 
 Definition of done: compare one code across three files, overlay their differences, and copy the reference glyph into another.
 
@@ -96,19 +97,19 @@ Crate: `fontspace-export`.
 
 Steps:
 
-1. Export config types (full schema persisted; `transforms` required empty) ([spec/10](spec/10-rom-export.md)).
-2. **Code-addressed** address/data maps; `evaluate_output_word`; logical memory-image generation.
-3. **1:1 coverage validator** (partition check, no address/data overlap, width match) with the diagnostics in [spec/14](spec/14-validation-and-errors.md). *Golden byte-exact image tests; property test: validated config never reads OOB.*
-4. `RawBinary` encoder; CLI `export` + `validate-export`; MCP export tools.
-5. GUI: export-config editor, export inspector, export preview (logical image / raw-bytes view).
+- [ ] Export config types (full schema persisted; `transforms` required empty) ([spec/10](spec/10-rom-export.md)).
+- [ ] **Code-addressed** address/data maps; `evaluate_output_word`; logical memory-image generation.
+- [ ] **1:1 coverage validator** (partition check, no address/data overlap, width match) with the diagnostics in [spec/14](spec/14-validation-and-errors.md). *Golden byte-exact image tests; property test: validated config never reads OOB.*
+- [ ] `RawBinary` encoder; CLI `export` + `validate-export`; MCP export tools.
+- [ ] GUI: export-config editor, export inspector, export preview (logical image / raw-bytes view).
 
 Definition of done: define an AT28C64-style 8×16, 128-code, 4-page config; validate it; render the 8192-byte image; assert it byte-for-byte in a golden test; export raw binary from the CLI.
 
 ## Cross-cutting, every milestone
 
-- Fuzz targets for parsers/evaluators land alongside the code they cover ([spec/15](spec/15-testing.md) §15.7).
-- Each PR updates the relevant `spec/*.md` for any normative change and this plan's status.
-- Keep `Limits` and error messages honest as new object kinds appear.
+- [ ] Fuzz targets for parsers/evaluators land alongside the code they cover ([spec/15](spec/15-testing.md) §15.7).
+- [ ] Each PR updates the relevant `spec/*.md` for any normative change and this plan's status.
+- [ ] Keep `Limits` and error messages honest as new object kinds appear.
 
 ## Release acceptance criteria (§16 of the original spec)
 
