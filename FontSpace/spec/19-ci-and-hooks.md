@@ -38,10 +38,12 @@ Jobs (all `working-directory: FontSpace`, toolchain pinned by `rust-toolchain.to
 
 - **`fmt`** — `cargo fmt --all --check`. One runner (`ubuntu-latest`).
 - **`clippy`** — `cargo clippy --workspace --all-targets -- -D warnings`. Matrix: `ubuntu-latest`, `macos-latest`.
-- **`test`** — `cargo test --workspace`. Matrix: `ubuntu-latest`, `macos-latest`. Runs unit, round-trip, golden, property, integration, and (once they exist) `egui_kittest` snapshot tests. Snapshots are deterministic (chapter 15); a snapshot diff fails the job.
+- **`test`** — `cargo test --workspace`. Matrix: `ubuntu-latest`, `macos-latest`. Runs unit, round-trip, golden, property, integration, and `egui_kittest` snapshot tests. Snapshot tests render through `wgpu`; the Linux leg installs the software Vulkan driver (`mesa-vulkan-drivers` + `libvulkan1`, i.e. **lavapipe**) and runs with `WGPU_BACKEND=vulkan` so a headless runner can rasterize. Snapshots are **pinned to Linux** (chapter 15 §15.6) — the macOS leg compiles the GUI crate but its snapshot tests are `cfg`-excluded — so there is one canonical renderer and no per-OS baselines. A snapshot diff fails the job.
 - **`markdown`** — the no-hardwrap lint over `FontSpace/**/*.md`. One runner.
 
 The **OS matrix is required**, not cosmetic: without a macOS runner the `muda` menu path (chapter 18 §18.4) never compiles in CI; without Linux the desktop-integration path (§18.5) doesn't. Both are `cfg`-gated, so only the matching runner type-checks them.
+
+**Regenerating snapshot baselines.** Because snapshots are pinned to Linux/lavapipe (chapter 15 §15.6), baselines are baked in a container whose renderer matches the runner — not on a developer's macOS host. Run the snapshot tests with `UPDATE_SNAPSHOTS=1` inside an `ubuntu:24.04` container (the `ubuntu-latest` base) with `mesa-vulkan-drivers` + `libvulkan1` installed and `WGPU_BACKEND=vulkan`, mounting the repo so the regenerated `.png` lands in the tree. Review every changed `.png` before committing. (Lavapipe is a software rasterizer, so an arm64 build host is acceptable in practice — the `failed_pixel_count_threshold` absorbs the residual cross-arch AA jitter — but matching the runner's arch with a `linux/amd64` container removes the variable if a diff ever bites.)
 
 Fuzz targets ([15](15-testing.md) §15.7) are **not** a PR gate — they run on a schedule or on demand, not on every PR.
 

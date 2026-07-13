@@ -57,8 +57,23 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
+    # egui_kittest snapshot tests render through wgpu. On Linux we force the software
+    # Vulkan driver (lavapipe) so headless runners can rasterize; macOS uses Metal.
+    # The snapshots are pinned to Linux (see crates/fontspace-egui/tests/snapshot.rs),
+    # so these vars are inert on the macOS leg.
+    #   WGPU_BACKEND=vulkan       selects lavapipe (the software Vulkan ICD below).
+    #   LIBGL_ALWAYS_SOFTWARE=1   belt-and-suspenders for any incidental GL init;
+    #                             the wgpu snapshot path itself is Vulkan, not GL.
+    env:
+      WGPU_BACKEND: vulkan
+      LIBGL_ALWAYS_SOFTWARE: "1"
     steps:
       - uses: actions/checkout@v5
+      - name: Install software Vulkan (lavapipe) for snapshot tests
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y mesa-vulkan-drivers libvulkan1
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: FontSpace

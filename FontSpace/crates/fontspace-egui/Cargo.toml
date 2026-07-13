@@ -1,0 +1,24 @@
+[package]
+name = "fontspace-egui"
+description = "Desktop GUI (egui + egui_tiles) over FontSpace's typed operations (spec/12)."
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "fontspace-gui"
+path = "src/main.rs"
+
+[dependencies]
+fontspace-model = { path = "../fontspace-model" }
+fontspace-ops = { path = "../fontspace-ops" }
+fontspace-render = { path = "../fontspace-render" }
+fontspace-json = { path = "../fontspace-json" }
+eframe = "0.35.0"
+egui = "0.35.0"
+egui_tiles = "0.16.0"
+
+[dev-dependencies]
+egui_kittest = { version = "0.35.0", features = ["wgpu", "snapshot"] }
