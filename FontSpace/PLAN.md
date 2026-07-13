@@ -50,8 +50,8 @@ Steps:
 
 - [x] App shell + `egui_tiles` scaffold + default layout + reset-to-default ([spec/12](spec/12-gui.md)). Also established the `egui_kittest` snapshot infrastructure (Linux-pinned lavapipe renderer, container-baked baselines, CI wgpu deps — spec/15 §15.6, spec/19 §19.3) with the first shell snapshot. — [#14](https://github.com/enthal/glyph-80/pull/14)
 - [x] **Glyph editor widget** — square-cell layout math, grid levels, guides overlay, hover; **pure** cell-size/hover/guide functions with unit tests ([spec/12](spec/12-gui.md) §12.3). — [#16](https://github.com/enthal/glyph-80/pull/16) *(display only; the stroke/interpolation pure functions land with the editing slice below, §12.4)*
-- [ ] **First-pixel-determines-stroke** editing → one `SetPixels` per drag → one undo entry; live tentative stroke.
-- [ ] Undo/redo (workspace-level stack, single doc for now) ([spec/07](spec/07-operations.md)).
+- [x] **First-pixel-determines-stroke** editing → one `SetPixels` per drag → one undo entry; live tentative stroke. — [#17](https://github.com/enthal/glyph-80/pull/17)
+- [x] Undo/redo (workspace-level stack, single doc for now) ([spec/07](spec/07-operations.md)). — [#17](https://github.com/enthal/glyph-80/pull/17)
 - [ ] Page overview; character-set view (with pre-apply impact for remove/recode); guides UI.
 - [ ] Text preview (image render) ([spec/09](spec/09-rendering.md)).
 - [ ] Open/Save/Save As/Revert with atomic writes; dirty tracking.

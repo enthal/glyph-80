@@ -10,8 +10,10 @@ use fontspace_model::{
     Bitmap, CharacterEntry, CharacterSet, FontSpace, Glyph, GlyphPage, GlyphSet, GlyphSetId,
     GlyphSize, Guide, GuideAxis, IdGen, PageId, RandomIdGen,
 };
+use fontspace_ops::{ChangeSet, GlyphRef, SetPixels, apply_change_set, set_pixels, undo};
 
 use crate::editor::geometry::GridLevel;
+use crate::editor::stroke::Stroke;
 
 /// What the editor and inspector are currently pointed at: one glyph, identified by
 /// its glyph set, page, and character `code` (spec/12 §12.3).
@@ -29,6 +31,12 @@ pub struct AppState {
     pub ids: Box<dyn IdGen>,
     pub selection: Selection,
     pub grid: GridLevel,
+    /// The stroke currently being dragged in the editor, if any (spec/12 §12.4).
+    active_stroke: Option<Stroke>,
+    /// Workspace-level undo/redo stacks of committed change sets (spec/07 §7.7). A
+    /// single-document workspace for now; multi-document lands in Milestone 3.
+    undo_stack: Vec<ChangeSet>,
+    redo_stack: Vec<ChangeSet>,
 }
 
 impl Default for AppState {
@@ -47,6 +55,89 @@ impl AppState {
             ids,
             selection,
             grid: GridLevel::Subtle,
+            active_stroke: None,
+            undo_stack: Vec::new(),
+            redo_stack: Vec::new(),
+        }
+    }
+
+    /// The current value of pixel `(x, y)` on the selected glyph (`false` if the
+    /// glyph is absent/blank or the coordinate is out of bounds).
+    pub fn selected_pixel(&self, x: u16, y: u16) -> bool {
+        self.selected_bitmap()
+            .is_some_and(|bitmap| bitmap.get(x, y).unwrap_or(false))
+    }
+
+    /// Begins an editor stroke at `cell`. Per spec/12 §12.4 the first pixel fixes the
+    /// mode: starting on an off pixel paints on; on an on pixel, erases.
+    pub fn begin_stroke(&mut self, cell: (u16, u16)) {
+        let mut stroke = Stroke::begin(!self.selected_pixel(cell.0, cell.1));
+        stroke.extend_to(cell);
+        self.active_stroke = Some(stroke);
+    }
+
+    /// Extends the active stroke to `cell` (no-op if no stroke is active).
+    pub fn extend_stroke(&mut self, cell: (u16, u16)) {
+        if let Some(stroke) = &mut self.active_stroke {
+            stroke.extend_to(cell);
+        }
+    }
+
+    /// The active stroke, for the editor's live tentative preview.
+    pub fn active_stroke(&self) -> Option<&Stroke> {
+        self.active_stroke.as_ref()
+    }
+
+    /// Commits the active stroke as one `SetPixels` command — one undo entry
+    /// (spec/07 §7.4, §7.7). A stroke that changes nothing records nothing. Committing
+    /// a new change discards the redo stack.
+    pub fn commit_stroke(&mut self) {
+        let Some(stroke) = self.active_stroke.take() else {
+            return;
+        };
+        if stroke.is_empty() {
+            return;
+        }
+        let request = SetPixels {
+            target: GlyphRef {
+                glyph_set_id: self.selection.glyph_set_id,
+                page_id: self.selection.page_id,
+                code: self.selection.code,
+            },
+            edits: stroke.edits(),
+        };
+        // The selection resolves and cells are in-bounds, so this does not fail; a
+        // stroke that paints pixels to their current value yields an empty change set.
+        if let Ok(change_set) = set_pixels(&mut self.document, &request)
+            && !change_set.is_empty()
+        {
+            self.undo_stack.push(change_set);
+            self.redo_stack.clear();
+        }
+    }
+
+    pub fn can_undo(&self) -> bool {
+        !self.undo_stack.is_empty()
+    }
+
+    pub fn can_redo(&self) -> bool {
+        !self.redo_stack.is_empty()
+    }
+
+    /// Undoes the most recent committed change (spec/07 §7.7).
+    pub fn undo(&mut self) {
+        if let Some(change_set) = self.undo_stack.pop() {
+            // The change set came from this document, so its inverse applies cleanly.
+            let _ = undo(&mut self.document, &change_set);
+            self.redo_stack.push(change_set);
+        }
+    }
+
+    /// Redoes the most recently undone change (spec/07 §7.7).
+    pub fn redo(&mut self) {
+        if let Some(change_set) = self.redo_stack.pop() {
+            let _ = apply_change_set(&mut self.document, &change_set);
+            self.undo_stack.push(change_set);
         }
     }
 
@@ -157,5 +248,70 @@ mod tests {
         assert_eq!(page.guides.len(), 1);
         assert!(page.guides[0].visible);
         assert_eq!(page.guides[0].axis, GuideAxis::Horizontal);
+    }
+
+    fn editable_state() -> AppState {
+        AppState::with_ids(Box::new(SequentialIdGen::new()))
+    }
+
+    #[test]
+    fn stroke_on_off_pixel_paints_on_and_is_one_undo_entry() {
+        let mut state = editable_state();
+        // (0, 0) is off in the drawn 'A'; a stroke there paints on.
+        assert!(!state.selected_pixel(0, 0));
+        state.begin_stroke((0, 0));
+        state.extend_stroke((0, 2)); // several cells in one drag
+        state.commit_stroke();
+
+        assert!(state.selected_pixel(0, 0));
+        assert!(state.selected_pixel(0, 1));
+        assert!(state.selected_pixel(0, 2));
+        assert!(state.can_undo());
+        assert!(!state.can_redo());
+        // A whole drag is exactly one undo entry (spec/07 §7.7).
+        assert_eq!(state.undo_stack.len(), 1);
+    }
+
+    #[test]
+    fn stroke_starting_on_an_on_pixel_erases() {
+        let mut state = editable_state();
+        // (2, 0) is on in the drawn 'A'; a stroke there erases.
+        assert!(state.selected_pixel(2, 0));
+        state.begin_stroke((2, 0));
+        state.commit_stroke();
+        assert!(!state.selected_pixel(2, 0));
+    }
+
+    #[test]
+    fn undo_then_redo_round_trips_a_stroke() {
+        let mut state = editable_state();
+        state.begin_stroke((0, 0));
+        state.extend_stroke((0, 2));
+        state.commit_stroke();
+
+        state.undo();
+        assert!(!state.selected_pixel(0, 0));
+        assert!(!state.selected_pixel(0, 2));
+        assert!(!state.can_undo());
+        assert!(state.can_redo());
+
+        state.redo();
+        assert!(state.selected_pixel(0, 0));
+        assert!(state.selected_pixel(0, 2));
+        assert!(state.can_undo());
+        assert!(!state.can_redo());
+    }
+
+    #[test]
+    fn committing_a_new_stroke_clears_the_redo_stack() {
+        let mut state = editable_state();
+        state.begin_stroke((0, 0));
+        state.commit_stroke();
+        state.undo();
+        assert!(state.can_redo());
+        // A fresh edit discards the redo history.
+        state.begin_stroke((7, 7));
+        state.commit_stroke();
+        assert!(!state.can_redo());
     }
 }

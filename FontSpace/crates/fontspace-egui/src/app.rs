@@ -63,8 +63,26 @@ impl FontSpaceApp {
     /// the `eframe::App` impl so it can be driven without an [`eframe::Frame`] — the
     /// `egui_kittest` snapshot harness calls it directly (spec/15 §15.6).
     pub fn show(&mut self, ui: &mut egui::Ui) {
+        self.handle_shortcuts(ui.ctx());
+
         egui::Panel::top("menu_bar").show(ui, |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
+                ui.menu_button("Edit", |ui| {
+                    if ui
+                        .add_enabled(self.state.can_undo(), egui::Button::new("Undo"))
+                        .clicked()
+                    {
+                        self.state.undo();
+                        ui.close();
+                    }
+                    if ui
+                        .add_enabled(self.state.can_redo(), egui::Button::new("Redo"))
+                        .clicked()
+                    {
+                        self.state.redo();
+                        ui.close();
+                    }
+                });
                 ui.menu_button("View", |ui| {
                     if ui.button("Reset layout to default").clicked() {
                         self.reset_layout();
@@ -78,13 +96,32 @@ impl FontSpaceApp {
             });
         });
 
-        // Split the borrow so the tiles behavior can hold `&state` while `tree` is
+        // Split the borrow so the tiles behavior can hold `&mut state` while `tree` is
         // driven mutably (disjoint fields of `self`).
         let Self { tree, state } = self;
         let mut behavior = PaneBehavior { state };
         egui::CentralPanel::default().show(ui, |ui| {
             tree.ui(&mut behavior, ui);
         });
+    }
+
+    /// Consumes the undo/redo keyboard shortcuts (spec/12 §12.5). `COMMAND` maps to
+    /// Cmd on macOS and Ctrl elsewhere, so both platforms match without extra code.
+    fn handle_shortcuts(&mut self, ctx: &egui::Context) {
+        use egui::{Key, KeyboardShortcut, Modifiers};
+        let undo = KeyboardShortcut::new(Modifiers::COMMAND, Key::Z);
+        let redo = KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::Z);
+        // Consume redo FIRST: egui matches modifiers *logically*, so the plain-Cmd+Z
+        // `undo` pattern also matches a Cmd+Shift+Z press. Claiming redo first removes
+        // that event before `undo` can swallow it (redo's Cmd+Shift+Z pattern never
+        // matches a bare Cmd+Z, since a required Shift can't be missing).
+        let (do_redo, do_undo) =
+            ctx.input_mut(|i| (i.consume_shortcut(&redo), i.consume_shortcut(&undo)));
+        if do_redo {
+            self.state.redo();
+        } else if do_undo {
+            self.state.undo();
+        }
     }
 }
 
@@ -101,10 +138,11 @@ fn focus_pane(tree: &mut Tree<Pane>, target: Pane) {
     tree.make_active(|_id, tile| matches!(tile, Tile::Pane(pane) if *pane == target));
 }
 
-/// Renders panes, reading the shared [`AppState`]. The glyph editor is live; the
-/// other views are placeholders until their Milestone-2 slices land.
+/// Renders panes against the shared [`AppState`]. The glyph editor is live (and
+/// mutates state through pointer editing); the other views are placeholders until
+/// their Milestone-2 slices land.
 struct PaneBehavior<'a> {
-    state: &'a AppState,
+    state: &'a mut AppState,
 }
 
 impl egui_tiles::Behavior<Pane> for PaneBehavior<'_> {
@@ -160,12 +198,43 @@ mod tests {
     #[test]
     fn focus_glyph_editor_is_a_safe_noop_on_the_pane_set() {
         let mut app = FontSpaceApp::default();
-        // Focusing raises the editor's tab; it never adds or drops panes. (In the
-        // default layout the editor is the dominant top pane, not inside a tab
-        // strip, so there is no visible tab to raise yet — this guards the command
-        // against panicking and against mutating the layout.)
-        let before = app.panes();
+        // Focusing raises the editor's tab; it never adds or drops panes. Compare as
+        // sets: `make_active` mutates the tiles container, which reorders its
+        // (hash-ordered) iteration — so the *set* of panes is what's invariant, not
+        // the order.
+        let before: std::collections::HashSet<_> = app.panes().into_iter().collect();
         app.focus_glyph_editor();
-        assert_eq!(app.panes(), before);
+        let after: std::collections::HashSet<_> = app.panes().into_iter().collect();
+        assert_eq!(before, after);
+    }
+
+    #[test]
+    fn cmd_shift_z_redoes_rather_than_undoes() {
+        // Regression: egui matches modifiers logically, so a naive undo-first consume
+        // let Cmd+Shift+Z fall through to undo and made redo unreachable (spec §12.5).
+        let mut app = FontSpaceApp::default();
+        app.state.begin_stroke((0, 0));
+        app.state.commit_stroke();
+        app.state.undo();
+        assert!(app.state.can_redo());
+
+        let ctx = egui::Context::default();
+        let raw = egui::RawInput {
+            events: vec![egui::Event::Key {
+                key: egui::Key::Z,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+            }],
+            ..Default::default()
+        };
+        ctx.begin_pass(raw);
+        app.handle_shortcuts(&ctx);
+        let _ = ctx.end_pass();
+
+        // Redo fired: the redo entry moved back onto the undo stack.
+        assert!(!app.state.can_redo());
+        assert!(app.state.can_undo());
     }
 }

@@ -42,11 +42,27 @@ fn shell_default_layout() {
 
 #[test]
 fn glyph_editor() {
-    let state = state();
+    let mut state = state();
     let mut harness = Harness::builder()
         .with_size(egui::vec2(360.0, 400.0))
         .wgpu()
-        .build_ui(move |ui| show_glyph_editor(ui, &state));
+        .build_ui(move |ui| show_glyph_editor(ui, &mut state));
     harness.run();
     harness.snapshot_options("glyph_editor", &options());
+}
+
+#[test]
+fn glyph_editor_after_stroke() {
+    let mut state = state();
+    // Apply a committed vertical stroke down the left column, as if dragged, so the
+    // snapshot shows editing having changed the glyph.
+    state.begin_stroke((0, 0));
+    state.extend_stroke((0, 7));
+    state.commit_stroke();
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(360.0, 400.0))
+        .wgpu()
+        .build_ui(move |ui| show_glyph_editor(ui, &mut state));
+    harness.run();
+    harness.snapshot_options("glyph_editor_after_stroke", &options());
 }

@@ -37,7 +37,9 @@ pub struct MatrixGeometry {
 }
 
 impl MatrixGeometry {
-    /// Fits and centers `glyph` within `available` (spec/12 §12.3).
+    /// Fits and centers `glyph` within `available` (spec/12 §12.3). The origin is
+    /// snapped to whole pixels so integer cell sizes keep grid lines and cells on
+    /// device pixels (crisp, un-blurred rendering).
     pub fn fit(available: Rect, glyph: GlyphSize) -> Self {
         let cell_size = cell_size(available.size(), glyph);
         let matrix = Vec2::new(
@@ -46,7 +48,7 @@ impl MatrixGeometry {
         );
         MatrixGeometry {
             cell_size,
-            origin: available.center() - matrix / 2.0,
+            origin: (available.center() - matrix / 2.0).round(),
             glyph,
         }
     }
