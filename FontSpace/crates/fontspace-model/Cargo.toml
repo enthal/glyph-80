@@ -1,6 +1,6 @@
 [package]
 name = "fontspace-model"
-description = "Core document and value types for FontSpace: model, validation, typed IDs, id/RNG injection."
+description = "Core document and value types for FontSpace: model, validation, typed IDs, id injection."
 edition.workspace = true
 version.workspace = true
 license.workspace = true

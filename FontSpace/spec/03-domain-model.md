@@ -30,6 +30,7 @@ Objects that can be selected, reordered, referenced, copied, or edited independe
 
 ```rust
 pub struct FontSpaceId(pub Uuid);
+pub struct CharacterSetId(pub Uuid);   // referenced by GlyphSet (§3.5)
 pub struct GlyphSetId(pub Uuid);
 pub struct PageId(pub Uuid);
 pub struct GuideId(pub Uuid);

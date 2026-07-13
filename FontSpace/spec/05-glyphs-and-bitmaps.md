@@ -25,6 +25,8 @@ impl Bitmap {
     pub fn new_blank(size: GlyphSize) -> Self;
     pub fn width(&self) -> u16;
     pub fn height(&self) -> u16;
+    pub fn size(&self) -> GlyphSize;     // (width, height) as a GlyphSize
+
     pub fn get(&self, x: u16, y: u16) -> Result<bool, BitmapError>;
     pub fn set(&mut self, x: u16, y: u16, value: bool) -> Result<(), BitmapError>;
     pub fn toggle(&mut self, x: u16, y: u16) -> Result<(), BitmapError>;
@@ -67,4 +69,6 @@ pub fn flipped(src: &Bitmap, axis: GuideAxis) -> Bitmap;
 pub fn inverted(src: &Bitmap) -> Bitmap;   // toggles every pixel (a data op, distinct from display inversion)
 ```
 
-Properties (chapter 15): `shifted(b, 0, 0, _) == b`; `flipped(flipped(b, a), a) == b`; `inverted(inverted(b)) == b`.
+`OverflowPolicy` is used by the batch `ShiftGlyphs` operation ([07](07-operations.md) §7.5) but is **defined in `fontspace-model`** alongside `shifted`, which needs it — front ends and `ops` re-export it from there.
+
+Properties (chapter 15): `shifted(b, 0, 0, _) == b`; `flipped(flipped(b, a), a) == b`; `inverted(inverted(b)) == b`. Because these three laws are each satisfied by the identity function, the implementation additionally pins exact per-pixel placement with reference-comparison tests (a straightforward independent re-derivation via `get`), so an accidental no-op or an x/y axis swap is caught.

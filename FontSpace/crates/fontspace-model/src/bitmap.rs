@@ -50,7 +50,23 @@ impl Bitmap {
     }
 
     fn bytes_per_row(&self) -> usize {
-        (self.width as usize).div_ceil(8)
+        self.size().bytes_per_row()
+    }
+
+    /// Builds a bitmap by evaluating `f(x, y)` for every pixel in row-major order.
+    /// Only `true` results are written (via `set_bit`), so padding columns are never
+    /// touched and the padding-bit-zero invariant holds by construction. The shared
+    /// engine behind [`shifted`], [`flipped`], and [`inverted`].
+    fn from_fn(size: GlyphSize, mut f: impl FnMut(u16, u16) -> bool) -> Self {
+        let mut out = Self::new_blank(size);
+        for y in 0..size.height {
+            for x in 0..size.width {
+                if f(x, y) {
+                    out.set_bit(x, y, true);
+                }
+            }
+        }
+        out
     }
 
     /// Byte index and MSB-first bit position for a coordinate assumed in-bounds.
@@ -159,64 +175,39 @@ pub enum OverflowPolicy {
 ///
 /// Positive `dx`/`dy` move content right/down. `shifted(b, 0, 0, _) == b`.
 pub fn shifted(src: &Bitmap, dx: i16, dy: i16, overflow: OverflowPolicy) -> Bitmap {
-    let mut out = Bitmap::new_blank(src.size());
+    // `w`/`h` are only read inside the closure, which `from_fn` calls solely for
+    // `x in 0..width`, `y in 0..height` — so both are > 0 whenever it runs, and the
+    // `rem_euclid(w)`/`rem_euclid(h)` below can never divide by zero.
     let (w, h) = (src.width as i32, src.height as i32);
-    if w == 0 || h == 0 {
-        return out;
-    }
-    for y in 0..src.height {
-        for x in 0..src.width {
-            // Destination (x, y) samples the source at (x - dx, y - dy).
-            let sx = x as i32 - dx as i32;
-            let sy = y as i32 - dy as i32;
-            let on = match overflow {
-                OverflowPolicy::Discard => {
-                    (0..w).contains(&sx)
-                        && (0..h).contains(&sy)
-                        && src.get_bit(sx as u16, sy as u16)
-                }
-                OverflowPolicy::Wrap => {
-                    src.get_bit(sx.rem_euclid(w) as u16, sy.rem_euclid(h) as u16)
-                }
-            };
-            if on {
-                out.set_bit(x, y, true);
+    Bitmap::from_fn(src.size(), |x, y| {
+        // Destination (x, y) samples the source at (x - dx, y - dy).
+        let sx = x as i32 - dx as i32;
+        let sy = y as i32 - dy as i32;
+        match overflow {
+            OverflowPolicy::Discard => {
+                (0..w).contains(&sx) && (0..h).contains(&sy) && src.get_bit(sx as u16, sy as u16)
             }
+            OverflowPolicy::Wrap => src.get_bit(sx.rem_euclid(w) as u16, sy.rem_euclid(h) as u16),
         }
-    }
-    out
+    })
 }
 
 /// A copy of `src` mirrored across `axis` (spec/05 §5.7).
 /// `flipped(flipped(b, a), a) == b`.
 pub fn flipped(src: &Bitmap, axis: GuideAxis) -> Bitmap {
-    let mut out = Bitmap::new_blank(src.size());
-    for y in 0..src.height {
-        for x in 0..src.width {
-            let (sx, sy) = match axis {
-                GuideAxis::Horizontal => (x, src.height - 1 - y),
-                GuideAxis::Vertical => (src.width - 1 - x, y),
-            };
-            if src.get_bit(sx, sy) {
-                out.set_bit(x, y, true);
-            }
-        }
-    }
-    out
+    Bitmap::from_fn(src.size(), |x, y| {
+        let (sx, sy) = match axis {
+            GuideAxis::Horizontal => (x, src.height - 1 - y),
+            GuideAxis::Vertical => (src.width - 1 - x, y),
+        };
+        src.get_bit(sx, sy)
+    })
 }
 
 /// A copy of `src` with every pixel toggled — a data operation, distinct from
 /// display inversion (spec/05 §5.7). `inverted(inverted(b)) == b`.
 pub fn inverted(src: &Bitmap) -> Bitmap {
-    let mut out = Bitmap::new_blank(src.size());
-    for y in 0..src.height {
-        for x in 0..src.width {
-            if !src.get_bit(x, y) {
-                out.set_bit(x, y, true);
-            }
-        }
-    }
-    out
+    Bitmap::from_fn(src.size(), |x, y| !src.get_bit(x, y))
 }
 
 #[cfg(test)]
@@ -325,7 +316,7 @@ mod tests {
         assert_eq!(b.count_on(), 5); // popcount matches pixel count => no padding leak
 
         // width 12 spans two bytes: second byte holds columns 8..12 in bits 7..=4,
-        // bits 3,1,0 padding.
+        // bits 3,2,1,0 padding.
         let mut c = blank(12, 1);
         for x in 0..12 {
             c.set(x, 0, true).unwrap();
@@ -373,6 +364,32 @@ mod tests {
     }
 
     #[test]
+    fn shifted_discard_vertical_and_diagonal() {
+        let mut b = blank(3, 3);
+        b.set(0, 0, true).unwrap();
+        // Down by 1.
+        let down = shifted(&b, 0, 1, OverflowPolicy::Discard);
+        assert!(down.get(0, 1).unwrap());
+        assert!(!down.get(0, 0).unwrap());
+        // Diagonal (right 1, down 1).
+        let diag = shifted(&b, 1, 1, OverflowPolicy::Discard);
+        assert!(diag.get(1, 1).unwrap());
+        assert_eq!(diag.count_on(), 1);
+        // Up by 1 pushes the only pixel off the top edge.
+        assert!(shifted(&b, 0, -1, OverflowPolicy::Discard).is_blank());
+    }
+
+    #[test]
+    fn shifted_wrap_vertical() {
+        let mut b = blank(1, 3);
+        b.set(0, 0, true).unwrap();
+        // Up by 1 wraps the top pixel to the bottom row.
+        let s = shifted(&b, 0, -1, OverflowPolicy::Wrap);
+        assert!(s.get(0, 2).unwrap());
+        assert_eq!(s.count_on(), 1);
+    }
+
+    #[test]
     fn flipped_horizontal_and_vertical() {
         let mut b = blank(2, 2);
         b.set(0, 0, true).unwrap(); // top-left
@@ -382,7 +399,35 @@ mod tests {
         assert!(h.get(0, 1).unwrap());
     }
 
-    // --- Property tests: the identity laws from spec/05 §5.7 ---
+    #[test]
+    fn flipped_asymmetric_full_content() {
+        // 3×2 "L":  row0: X X .   row1: X . .
+        let mut b = blank(3, 2);
+        for (x, y) in [(0, 0), (1, 0), (0, 1)] {
+            b.set(x, y, true).unwrap();
+        }
+        // Vertical mirror (x -> width-1-x):  row0: . X X   row1: . . X
+        let v = flipped(&b, GuideAxis::Vertical);
+        let on_v: Vec<(u16, u16)> = (0..2)
+            .flat_map(|y| (0..3).map(move |x| (x, y)))
+            .filter(|&(x, y)| v.get(x, y).unwrap())
+            .collect();
+        assert_eq!(on_v, vec![(1, 0), (2, 0), (2, 1)]);
+        // Horizontal mirror (y -> height-1-y):  row0: X . .   row1: X X .
+        let h = flipped(&b, GuideAxis::Horizontal);
+        let on_h: Vec<(u16, u16)> = (0..2)
+            .flat_map(|y| (0..3).map(move |x| (x, y)))
+            .filter(|&(x, y)| h.get(x, y).unwrap())
+            .collect();
+        assert_eq!(on_h, vec![(0, 0), (0, 1), (1, 1)]);
+    }
+
+    // --- Property tests: the laws from spec/05 §5.7 ---
+    //
+    // The involution/identity laws below are all satisfied by a no-op, so they are
+    // paired with reference-comparison proptests (`*_matches_reference`) that assert
+    // exact per-pixel placement via the public `get` path — those are what actually
+    // pin direction and catch an accidental identity or an x/y axis swap.
 
     prop_compose! {
         fn arb_bitmap()(w in 1u16..=17, h in 1u16..=17)
@@ -422,6 +467,66 @@ mod tests {
         #[test]
         fn wrap_shift_preserves_pixel_count(b in arb_bitmap(), dx in -20i16..=20, dy in -20i16..=20) {
             prop_assert_eq!(shifted(&b, dx, dy, OverflowPolicy::Wrap).count_on(), b.count_on());
+        }
+
+        /// Asserts exact per-pixel placement for both policies and all shift
+        /// directions — the reference re-derives each destination independently via
+        /// `get`, so a no-op, a wrong sign, or an x/y `rem_euclid` swap fails here.
+        #[test]
+        fn shifted_matches_reference(
+            b in arb_bitmap(),
+            dx in -20i16..=20,
+            dy in -20i16..=20,
+            wrap in any::<bool>(),
+        ) {
+            let overflow = if wrap { OverflowPolicy::Wrap } else { OverflowPolicy::Discard };
+            let out = shifted(&b, dx, dy, overflow);
+            let (w, h) = (b.width() as i32, b.height() as i32);
+            for y in 0..b.height() {
+                for x in 0..b.width() {
+                    let sx = x as i32 - dx as i32;
+                    let sy = y as i32 - dy as i32;
+                    let expected = match overflow {
+                        OverflowPolicy::Discard => {
+                            (0..w).contains(&sx)
+                                && (0..h).contains(&sy)
+                                && b.get(sx as u16, sy as u16).unwrap()
+                        }
+                        OverflowPolicy::Wrap => {
+                            b.get(sx.rem_euclid(w) as u16, sy.rem_euclid(h) as u16).unwrap()
+                        }
+                    };
+                    prop_assert_eq!(out.get(x, y).unwrap(), expected, "at ({}, {})", x, y);
+                }
+            }
+        }
+
+        /// Exact per-pixel placement for `flipped` on both axes.
+        #[test]
+        fn flipped_matches_reference(b in arb_bitmap(), vertical in any::<bool>()) {
+            let axis = if vertical { GuideAxis::Vertical } else { GuideAxis::Horizontal };
+            let out = flipped(&b, axis);
+            for y in 0..b.height() {
+                for x in 0..b.width() {
+                    let (sx, sy) = match axis {
+                        GuideAxis::Horizontal => (x, b.height() - 1 - y),
+                        GuideAxis::Vertical => (b.width() - 1 - x, y),
+                    };
+                    prop_assert_eq!(out.get(x, y).unwrap(), b.get(sx, sy).unwrap());
+                }
+            }
+        }
+
+        /// `inverted` actually toggles every pixel (not just the involution law).
+        #[test]
+        fn inverted_toggles_every_pixel(b in arb_bitmap()) {
+            let inv = inverted(&b);
+            for y in 0..b.height() {
+                for x in 0..b.width() {
+                    prop_assert_eq!(inv.get(x, y).unwrap(), !b.get(x, y).unwrap());
+                }
+            }
+            prop_assert_eq!(inv.count_on() + b.count_on(), b.width() as u32 * b.height() as u32);
         }
     }
 }
