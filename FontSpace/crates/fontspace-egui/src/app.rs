@@ -115,18 +115,23 @@ mod tests {
     #[test]
     fn reset_layout_restores_the_full_pane_set() {
         let mut app = FontSpaceApp::default();
-        // Removing a pane then resetting must bring it back.
-        let a_pane = app.tree.tiles.iter().next().map(|(id, _)| *id).unwrap();
-        app.tree.tiles.remove(a_pane);
+        // Remove a *known* pane (not `tiles.iter().next()`, whose hash order is
+        // non-deterministic and often yields a container, not a pane) so the count
+        // reliably drops; resetting must bring it back.
+        let editor = app.tree.tiles.find_pane(&Pane::GlyphEditor).unwrap();
+        app.tree.tiles.remove(editor);
         assert!(app.panes().len() < Pane::ALL.len());
         app.reset_layout();
         assert_eq!(app.panes().len(), Pane::ALL.len());
     }
 
     #[test]
-    fn focus_glyph_editor_activates_the_editor_tab() {
+    fn focus_glyph_editor_is_a_safe_noop_on_the_pane_set() {
         let mut app = FontSpaceApp::default();
-        // Focusing is a no-panic command that leaves the pane set unchanged.
+        // Focusing raises the editor's tab; it never adds or drops panes. (In the
+        // default layout the editor is the dominant top pane, not inside a tab
+        // strip, so there is no visible tab to raise yet — this guards the command
+        // against panicking and against mutating the layout.)
         let before = app.panes();
         app.focus_glyph_editor();
         assert_eq!(app.panes(), before);

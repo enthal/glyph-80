@@ -113,9 +113,10 @@ mod tests {
     }
 
     #[test]
-    fn reset_reproduces_the_default_pane_set() {
-        // "Reset to default" is `self.tree = default_tree()`; two builds agree on the
-        // pane set. (Tile storage iterates in hash order, so compare as sets.)
+    fn default_tree_is_deterministic() {
+        // Two builds must agree on the pane set (the reset command is just a
+        // rebuild). Tile storage iterates in hash order, so compare as sets. The
+        // reset command's actual round-trip is covered in `app.rs`.
         let a: HashSet<_> = panes_in(&default_tree()).into_iter().collect();
         let b: HashSet<_> = panes_in(&default_tree()).into_iter().collect();
         assert_eq!(a, b);
