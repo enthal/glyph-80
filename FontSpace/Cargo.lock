@@ -107,6 +107,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "fontspace-render"
+version = "0.0.0"
+dependencies = [
+ "fontspace-model",
+ "fontspace-ops",
+]
+
+[[package]]
 name = "futures-core"
 version = "0.3.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"

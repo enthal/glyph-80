@@ -1,0 +1,12 @@
+[package]
+name = "fontspace-render"
+description = "Pure text-grid rendering of FontSpace glyphs (spec/09). Returns strings, never GUI textures."
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+fontspace-model = { path = "../fontspace-model" }
+fontspace-ops = { path = "../fontspace-ops" }
