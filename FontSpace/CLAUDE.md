@@ -91,7 +91,7 @@ Operational reminders; the rationale is in the spec.
 ## Code style
 
 - **Typed IDs for everything durable:** `GlyphSetId`, `PageId`, `GuideId`, `ExportConfigId`, `ExportComponentId`, `DocumentId` (runtime-only). These are newtype-wrapped UUIDs, not interchangeable — the type system should say so. **Character entries are the deliberate exception:** they are keyed by their `code: u32` (their identity and ROM address dimension), not a UUID. See [spec/04-character-sets.md](spec/04-character-sets.md).
-- **Map naming:** `things_by_key` for `Map<key, thing>`; `glyph_by_code` for a page's glyph lookup. For nested: `things_by_inner_by_outer` means `Map<outer, Map<inner, thing>>` (read right-to-left). For collection values include the container: `glyph_vecs_by_page`.
+- **Map naming:** `things_by_key` for `Map<key, thing>`; "things" plural; `glyphs_by_code` (not `glyph_by_code`) for a page's glyph map. For nested: `things_by_inner_by_outer` means `Map<outer, Map<inner, thing>>` (read right-to-left). For collection values include the container: `glyph_vecs_by_page`.
 - **No `unsafe`.** Every FontSpace crate sets `#![forbid(unsafe_code)]` at the crate root. If you want `unsafe`, stop and ask — it almost certainly means a different dependency or abstraction.
 - **No `unwrap()` / `expect()` in non-test code** except where a contract makes failure impossible, and even then prefer a typed `Result`. `expect` messages describe the invariant, not the operation.
 - **Structural safety over incidental correctness:** `char_indices()` over byte slicing; typed newtypes over bare `u64`; access bitmaps through methods, never the packed layout.
