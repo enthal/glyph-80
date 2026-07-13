@@ -45,6 +45,10 @@ pub enum ObjectChange {
     PagesReordered(PagesReorder),
     GuideChanged(GuideChange),
     CharacterSetChanged(CharacterSetChange),
+    /// A whole glyph removed from a page (e.g. the entry-removal cascade, spec/07 §7.8).
+    GlyphRemoved(GlyphPlacement),
+    /// A whole glyph inserted at an index — the inverse of `GlyphRemoved`.
+    GlyphInserted(GlyphPlacement),
 }
 
 impl ObjectChange {
@@ -59,8 +63,22 @@ impl ObjectChange {
             ObjectChange::CharacterSetChanged(change) => {
                 ObjectChange::CharacterSetChanged(change.inverted())
             }
+            ObjectChange::GlyphRemoved(placement) => ObjectChange::GlyphInserted(placement.clone()),
+            ObjectChange::GlyphInserted(placement) => ObjectChange::GlyphRemoved(placement.clone()),
         }
     }
+}
+
+/// A whole glyph at a specific position in a page's glyph vector. Records the index
+/// so a removed glyph is restored exactly (spec/07 §7.8). Distinct from `GlyphChange`,
+/// which edits an existing glyph's bitmap in place; this adds or removes the glyph.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GlyphPlacement {
+    pub glyph_set_id: GlyphSetId,
+    pub page_id: PageId,
+    pub index: usize,
+    pub code: u32,
+    pub bitmap: Bitmap,
 }
 
 /// A glyph's bitmap changing from `before` to `after`. `before` is blank if the
@@ -168,6 +186,15 @@ pub struct OrphanedGlyph {
     pub code: u32,
 }
 
+/// A glyph deleted by an entry-removal cascade (spec/07 §7.8). Listed in the
+/// warning so the user sees exactly what was removed; undo restores it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CascadedGlyph {
+    pub glyph_set_id: GlyphSetId,
+    pub page_id: PageId,
+    pub code: u32,
+}
+
 /// A non-fatal warning attached to a change set (spec/07 §7.7).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FontSpaceWarning {
@@ -178,5 +205,13 @@ pub enum FontSpaceWarning {
         from_code: u32,
         to_code: u32,
         orphaned: Vec<OrphanedGlyph>,
+    },
+    /// A `RemoveCharacterEntry` cascade-deleted the listed glyphs across every glyph
+    /// set referencing the character set (spec/04 §4.4, spec/07 §7.8). Undo restores
+    /// the entry and every glyph.
+    RemoveCascade {
+        character_set_id: CharacterSetId,
+        code: u32,
+        removed: Vec<CascadedGlyph>,
     },
 }
