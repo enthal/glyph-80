@@ -126,6 +126,7 @@ pub enum ObjectChange {
     GlyphRemoved(GlyphRemoved),       // e.g. entry-removal cascade
     PageInserted(PageInserted),
     PageRemoved(PageRemoved),
+    PagesReordered(PagesReorder),     // before/after page-id order; inverse swaps them
     GuideChanged(GuideChange),
     CharacterSetChanged(CharacterSetChange),
     ExportConfigChanged(ExportConfigChange),
