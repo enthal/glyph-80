@@ -48,7 +48,7 @@ Crate: `fontspace-egui` (+ `fontspace-render` image output).
 
 Steps:
 
-- [ ] App shell + `egui_tiles` scaffold + default layout + reset-to-default ([spec/12](spec/12-gui.md)).
+- [x] App shell + `egui_tiles` scaffold + default layout + reset-to-default ([spec/12](spec/12-gui.md)). — [#14](https://github.com/enthal/glyph-80/pull/14)
 - [ ] **Glyph editor widget** — square-cell layout math, grid levels, guides overlay, hover; **pure** stroke/interpolation/cell-size functions with unit tests ([spec/12](spec/12-gui.md) §12.3–12.4).
 - [ ] **First-pixel-determines-stroke** editing → one `SetPixels` per drag → one undo entry; live tentative stroke.
 - [ ] Undo/redo (workspace-level stack, single doc for now) ([spec/07](spec/07-operations.md)).
