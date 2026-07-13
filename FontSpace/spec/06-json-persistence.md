@@ -71,7 +71,7 @@ Canonical pixel characters: `.` = off, `#` = on. Loader requirements:
 - only `.` and `#` are accepted in canonical files;
 - malformed data produces a precise error identifying glyph set, page, code, row, and column where possible.
 
-Explicit import/paste may accept alternate on/off characters, but **saving always normalizes to `.` and `#`**. A page's glyph array is written **in charset-entry order** (chapter 4), and **blank glyphs are omitted** (chapter 5 §5.6).
+Explicit import/paste may accept alternate on/off characters, but **saving always normalizes to `.` and `#`**. A page's glyph array is written **in charset-entry order** (chapter 4), and **blank glyphs are omitted** (chapter 5 §5.6). A **dangling** glyph — one whose `code` has no entry in the referenced character set (chapter 4 §4.4), and so has no ordinal — is written **after** all entry-ordered glyphs, in **ascending `code` order**, so output stays deterministic even in the tolerated dangling case.
 
 ## 6.5 Example document
 

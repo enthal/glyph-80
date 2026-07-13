@@ -1,0 +1,20 @@
+[package]
+name = "fontspace-json"
+description = "Deterministic, canonical JSON persistence for FontSpace documents (spec/06)."
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+fontspace-model = { path = "../fontspace-model" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+# Parsing id strings back into typed UUIDs on load. No `v4` — new ids never come
+# from the loader; they come from an injected IdGen (spec/03).
+uuid = "1"
+
+[dev-dependencies]
+proptest = "1"
