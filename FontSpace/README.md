@@ -42,7 +42,7 @@ cargo run -p fontspace-cli -- shift demo.fontspace.json \
 
 Mutating commands (`set-pixels`, `shift`) write canonical JSON atomically and support `--dry-run`; `--seq` wires the deterministic id generator for reproducible fixtures. (`extract` and machine-readable JSON errors arrive with later milestones.)
 
-The **GUI** (`fontspace-gui`, from `fontspace-egui`) is landing over Milestone 2. It currently opens the tiled application shell — the `egui_tiles` workspace with the default layout (documents · glyph editor · char-set/pages/preview tabs · inspector), plus **reset-to-default-layout** and **focus-glyph-editor** commands. The editor widgets themselves arrive in the following Milestone-2 slices.
+The **GUI** (`fontspace-gui`, from `fontspace-egui`) is landing over Milestone 2. It opens the tiled application shell — the `egui_tiles` workspace with the default layout (documents · glyph editor · char-set/pages/preview tabs · inspector), plus **reset-to-default-layout** and **focus-glyph-editor** commands. The **glyph editor** is live: a custom-painted view of the selected glyph's pixel matrix with square cells, grid lines, page guides, and a hover-coordinate readout (it opens on a small in-memory starter document until file open/save lands). Pixel editing and the remaining views arrive in the following Milestone-2 slices.
 
 ```sh
 cargo run -p fontspace-egui               # open the desktop shell

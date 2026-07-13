@@ -47,8 +47,10 @@ A custom painted widget, **not** a matrix of `Button`s. It shows the pixel matri
 The matrix fills available space while keeping pixels square:
 
 ```text
-cell_size = floor(min(available_width / glyph_width, available_height / glyph_height))
+cell_size = max(1, floor(min(available_width / glyph_width, available_height / glyph_height)))
 ```
+
+The clamp to at least one pixel keeps the matrix non-degenerate (and hover mapping division safe) when a tile is smaller than the glyph. The matrix is centered in the available space.
 
 Supports fit-to-panel, integer zoom, mouse-wheel zoom, panning when zoomed past the viewport, and grid levels off/subtle/strong. The size math, hover mapping, and stroke logic are **pure functions** tested outside the paint closure (chapter 15).
 

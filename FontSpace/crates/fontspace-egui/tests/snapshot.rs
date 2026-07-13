@@ -12,7 +12,9 @@
 #![cfg(target_os = "linux")]
 
 use egui_kittest::{Harness, SnapshotOptions};
-use fontspace_egui::FontSpaceApp;
+use fontspace_egui::editor::show_glyph_editor;
+use fontspace_egui::{AppState, FontSpaceApp};
+use fontspace_model::SequentialIdGen;
 
 /// A small differing-pixel cushion absorbs mesa/lavapipe minor-version AA jitter
 /// between the baseline container and the CI runner, while still catching any real
@@ -22,13 +24,29 @@ fn options() -> SnapshotOptions {
     SnapshotOptions::new().failed_pixel_count_threshold(2_000)
 }
 
+/// A deterministic starter document (sequential ids — never random in tests).
+fn state() -> AppState {
+    AppState::with_ids(Box::new(SequentialIdGen::new()))
+}
+
 #[test]
 fn shell_default_layout() {
-    let mut app = FontSpaceApp::default();
+    let mut app = FontSpaceApp::with_state(state());
     let mut harness = Harness::builder()
         .with_size(egui::vec2(1200.0, 800.0))
         .wgpu()
         .build_ui(move |ui| app.show(ui));
     harness.run();
     harness.snapshot_options("shell_default_layout", &options());
+}
+
+#[test]
+fn glyph_editor() {
+    let state = state();
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(360.0, 400.0))
+        .wgpu()
+        .build_ui(move |ui| show_glyph_editor(ui, &state));
+    harness.run();
+    harness.snapshot_options("glyph_editor", &options());
 }
