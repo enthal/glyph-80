@@ -57,6 +57,8 @@ Checked-in examples, regenerated deliberately and diffed before commit:
 
 Test state transitions beneath the renderer, plus `egui_kittest` snapshots for key views. Essential behaviors: first-pixel stroke mode; drag interpolation; one undo entry per stroke; tile persistence/restore; cross-file drag/copy/paste; page/code selection sync; export-validation feedback. Snapshot review is mandatory (view every changed `.png` and `*.diff.png`).
 
+**Single canonical renderer.** `egui_kittest` snapshots rasterize through `wgpu`, and GPU text/AA output differs between backends (macOS Metal vs Linux lavapipe), so snapshots are **pinned to Linux** — the test file is `#![cfg(target_os = "linux")]`, the macOS CI leg and local macOS dev skip them, and there are no per-OS baselines. Baselines are regenerated deterministically in an `ubuntu:24.04` + lavapipe container matching the `ubuntu-latest` runner (chapter 19 §19.3), via `UPDATE_SNAPSHOTS=1 cargo test`; a modest `failed_pixel_count_threshold` absorbs mesa minor-version AA jitter while still catching real layout changes. The generated `.png` is reviewed and committed; `*.new.png`/`*.diff.png`/`*.old.png` are git-ignored.
+
 ## 15.7 Fuzzing (later milestones)
 
 Fuzz the JSON loader, fragment loader, visual-row parser, export evaluator, and migration code. Malformed input must never panic or allocate without reasonable bounds.

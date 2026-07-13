@@ -48,7 +48,7 @@ Crate: `fontspace-egui` (+ `fontspace-render` image output).
 
 Steps:
 
-- [x] App shell + `egui_tiles` scaffold + default layout + reset-to-default ([spec/12](spec/12-gui.md)). — [#14](https://github.com/enthal/glyph-80/pull/14)
+- [x] App shell + `egui_tiles` scaffold + default layout + reset-to-default ([spec/12](spec/12-gui.md)). Also established the `egui_kittest` snapshot infrastructure (Linux-pinned lavapipe renderer, container-baked baselines, CI wgpu deps — spec/15 §15.6, spec/19 §19.3) with the first shell snapshot. — [#14](https://github.com/enthal/glyph-80/pull/14)
 - [ ] **Glyph editor widget** — square-cell layout math, grid levels, guides overlay, hover; **pure** stroke/interpolation/cell-size functions with unit tests ([spec/12](spec/12-gui.md) §12.3–12.4).
 - [ ] **First-pixel-determines-stroke** editing → one `SetPixels` per drag → one undo entry; live tentative stroke.
 - [ ] Undo/redo (workspace-level stack, single doc for now) ([spec/07](spec/07-operations.md)).
@@ -56,7 +56,7 @@ Steps:
 - [ ] Text preview (image render) ([spec/09](spec/09-rendering.md)).
 - [ ] Open/Save/Save As/Revert with atomic writes; dirty tracking.
 - [ ] **Platform identity + Linux desktop integration** ([spec/18](spec/18-platform-support.md)): `APP_ID`/storage-namespace constants, embedded `assets/app_icon.png` → window icon, `with_app_id`, the self-installing `.desktop`+icon (Exec-resolves / AppImage / `StartupWMClass` / `update-desktop-database`), and the `cursor_env` re-exec bridge. Port Termica's pure helpers (`desktop_entry_contents`, `desktop_exec_field`, `resolve_exec_path`) with their unit tests, plus the `APP_ID == packager identifier` test.
-- [ ] `egui_kittest` snapshots for editor, page overview, preview; snapshot review.
+- [ ] `egui_kittest` snapshots for editor, page overview, preview; snapshot review. *(Infrastructure landed in [#14](https://github.com/enthal/glyph-80/pull/14); each view slice adds its own snapshot, so this closes when the last view does.)*
 
 Definition of done: draw a glyph, undo/redo the whole stroke, add guides, view a page, preview text, save and reopen — all through the GUI; on Linux the window carries our icon and the app appears in the launcher.
 

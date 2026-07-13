@@ -1,0 +1,5 @@
+# Transient egui_kittest artifacts from a failing/updated snapshot run.
+# Only the committed baseline `*.png` is tracked; these are regenerated each run.
+*.new.png
+*.diff.png
+*.old.png

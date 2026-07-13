@@ -68,3 +68,5 @@ GitHub Actions runs [`.github/workflows/fontspace-ci.yml`](../.github/workflows/
 | `markdown` | ubuntu | markdown no-hardwrap lint |
 
 `clippy` and `test` run on a **macOS + Linux matrix** so the `cfg`-gated per-platform code (native macOS menus, Linux desktop integration) is actually compiled and checked on both. CI is the authoritative gate; the local hook is a fast convenience. Full design: [spec/19-ci-and-hooks.md](spec/19-ci-and-hooks.md).
+
+GUI **snapshot tests** (`egui_kittest`) render through `wgpu` and are **pinned to Linux** (lavapipe) as the single canonical renderer — the macOS leg and local macOS dev skip them. Baselines are regenerated in an `ubuntu:24.04` + lavapipe container matching the runner (`UPDATE_SNAPSHOTS=1 cargo test`); review the changed `.png` before committing. See [spec/15-testing.md](spec/15-testing.md) §15.6.

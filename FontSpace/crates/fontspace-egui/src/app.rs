@@ -47,12 +47,11 @@ impl FontSpaceApp {
     pub fn focus_glyph_editor(&mut self) {
         focus_pane(&mut self.tree, Pane::GlyphEditor);
     }
-}
 
-impl eframe::App for FontSpaceApp {
-    // eframe 0.35 hands the root `Ui` directly (was `update(&mut self, &Context, …)`
-    // in earlier versions); panels dock inside it.
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+    /// Renders the whole shell (menu bar + tiled workspace) into `ui`. Split out of
+    /// the `eframe::App` impl so it can be driven without an [`eframe::Frame`] — the
+    /// `egui_kittest` snapshot harness calls it directly (spec/15 §15.6).
+    pub fn show(&mut self, ui: &mut egui::Ui) {
         egui::Panel::top("menu_bar").show(ui, |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
                 ui.menu_button("View", |ui| {
@@ -71,6 +70,14 @@ impl eframe::App for FontSpaceApp {
         egui::CentralPanel::default().show(ui, |ui| {
             self.tree.ui(&mut self.behavior, ui);
         });
+    }
+}
+
+impl eframe::App for FontSpaceApp {
+    // eframe 0.35 hands the root `Ui` directly (was `update(&mut self, &Context, …)`
+    // in earlier versions); panels dock inside it.
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        self.show(ui);
     }
 }
 

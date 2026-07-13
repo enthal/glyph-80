@@ -38,7 +38,7 @@ Jobs (all `working-directory: FontSpace`, toolchain pinned by `rust-toolchain.to
 
 - **`fmt`** — `cargo fmt --all --check`. One runner (`ubuntu-latest`).
 - **`clippy`** — `cargo clippy --workspace --all-targets -- -D warnings`. Matrix: `ubuntu-latest`, `macos-latest`.
-- **`test`** — `cargo test --workspace`. Matrix: `ubuntu-latest`, `macos-latest`. Runs unit, round-trip, golden, property, integration, and (once they exist) `egui_kittest` snapshot tests. Snapshots are deterministic (chapter 15); a snapshot diff fails the job.
+- **`test`** — `cargo test --workspace`. Matrix: `ubuntu-latest`, `macos-latest`. Runs unit, round-trip, golden, property, integration, and `egui_kittest` snapshot tests. Snapshot tests render through `wgpu`; the Linux leg installs the software Vulkan driver (`mesa-vulkan-drivers` + `libvulkan1`, i.e. **lavapipe**) and runs with `WGPU_BACKEND=vulkan` so a headless runner can rasterize. Snapshots are **pinned to Linux** (chapter 15 §15.6) — the macOS leg compiles the GUI crate but its snapshot tests are `cfg`-excluded — so there is one canonical renderer and no per-OS baselines. A snapshot diff fails the job.
 - **`markdown`** — the no-hardwrap lint over `FontSpace/**/*.md`. One runner.
 
 The **OS matrix is required**, not cosmetic: without a macOS runner the `muda` menu path (chapter 18 §18.4) never compiles in CI; without Linux the desktop-integration path (§18.5) doesn't. Both are `cfg`-gated, so only the matching runner type-checks them.

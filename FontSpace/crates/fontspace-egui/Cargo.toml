@@ -19,3 +19,6 @@ fontspace-json = { path = "../fontspace-json" }
 eframe = "0.35.0"
 egui = "0.35.0"
 egui_tiles = "0.16.0"
+
+[dev-dependencies]
+egui_kittest = { version = "0.35.0", features = ["wgpu", "snapshot"] }
