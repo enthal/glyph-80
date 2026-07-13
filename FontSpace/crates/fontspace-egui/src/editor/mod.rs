@@ -1,14 +1,17 @@
 //! The glyph editor tile: a custom-painted view of the selected glyph's pixel
-//! matrix, with grid lines, page guides, and a hover-coordinate readout (spec/12
-//! §12.3, §12.6). It is a painted widget, **not** a grid of `Button`s.
+//! matrix, with grid lines, page guides, a hover-coordinate readout, and
+//! first-pixel-determines-stroke pixel editing (spec/12 §12.3–§12.4). It is a
+//! painted widget, **not** a matrix of `Button`s.
 //!
-//! This slice is display-only; first-pixel-stroke editing lands in the next M2 slice
-//! (spec/12 §12.4). All layout math lives in [`geometry`] and is unit-tested outside
-//! this paint code.
+//! All layout and stroke math lives in [`geometry`] and [`stroke`] and is unit-tested
+//! outside this paint/input code.
 
 pub mod geometry;
+pub mod stroke;
 
-use egui::{Align2, Color32, CornerRadius, FontId, Rangef, Sense, Stroke, StrokeKind};
+use egui::{
+    Align2, Color32, CornerRadius, FontId, Rangef, Sense, Stroke as EguiStroke, StrokeKind,
+};
 
 use crate::state::AppState;
 use geometry::{GridLevel, MatrixGeometry};
@@ -19,34 +22,42 @@ const GRID_SUBTLE: Color32 = Color32::from_gray(64);
 const GRID_STRONG: Color32 = Color32::from_gray(110);
 const GUIDE: Color32 = Color32::from_rgb(80, 160, 240);
 const HOVER: Color32 = Color32::from_rgb(255, 200, 60);
+/// Tentative paint (a stroke in progress, before commit).
+const TENTATIVE_ON: Color32 = Color32::from_rgb(180, 210, 120);
+const TENTATIVE_OFF: Color32 = Color32::from_rgb(70, 60, 40);
 
-/// Renders the glyph editor for the current selection into `ui`.
-pub fn show_glyph_editor(ui: &mut egui::Ui, state: &AppState) {
-    let Some((glyph_set, page)) = state.selected_context() else {
+/// Renders the glyph editor for the current selection into `ui`, handling pointer
+/// editing. Mutates `state` (applies a committed stroke, tracks the in-progress one).
+pub fn show_glyph_editor(ui: &mut egui::Ui, state: &mut AppState) {
+    let Some((glyph_set, _page)) = state.selected_context() else {
         ui.weak("No glyph selected.");
         return;
     };
     let size = glyph_set.glyph_size;
     let code = state.selection.code;
+    let name = glyph_set.name.clone();
 
     // Header: what is being edited.
     ui.horizontal(|ui| {
-        ui.strong(&glyph_set.name);
+        ui.strong(&name);
         ui.separator();
         ui.monospace(format!("code {code:#04X}"));
         if let Some(label) = state.selected_label() {
-            ui.label(label);
+            ui.label(label.to_string());
         }
     });
     ui.separator();
 
-    // Body: the painted matrix fills the remaining space.
-    let (rect, response) = ui.allocate_exact_size(ui.available_size(), Sense::hover());
+    // Body: the painted matrix fills the remaining space and takes pointer input.
+    let (rect, response) = ui.allocate_exact_size(ui.available_size(), Sense::click_and_drag());
     let geom = MatrixGeometry::fit(rect, size);
+
+    handle_input(state, &geom, &response);
+
     let painter = ui.painter_at(rect);
     let matrix = geom.matrix_rect();
 
-    // Cells: paint the matrix background, then only the on-pixels.
+    // Cells: matrix background, then committed on-pixels.
     painter.rect_filled(matrix, CornerRadius::ZERO, CELL_OFF);
     if let Some(bitmap) = state.selected_bitmap() {
         for y in 0..size.height {
@@ -58,47 +69,100 @@ pub fn show_glyph_editor(ui: &mut egui::Ui, state: &AppState) {
         }
     }
 
-    // Grid lines between/around cells (spec/12 §12.3).
+    // Live tentative stroke, drawn over the committed pixels before commit.
+    if let Some(active) = state.active_stroke() {
+        let color = if active.paint_on {
+            TENTATIVE_ON
+        } else {
+            TENTATIVE_OFF
+        };
+        for &(x, y) in active.cells() {
+            painter.rect_filled(geom.cell_rect(x, y), CornerRadius::ZERO, color);
+        }
+    }
+
+    // Grid lines around/between cells (spec/12 §12.3).
     if let Some(color) = match state.grid {
         GridLevel::Off => None,
         GridLevel::Subtle => Some(GRID_SUBTLE),
         GridLevel::Strong => Some(GRID_STRONG),
     } {
-        let stroke = Stroke::new(1.0, color);
+        let grid_stroke = EguiStroke::new(1.0, color);
         for i in 0..=size.width {
             let x = geom.origin.x + i as f32 * geom.cell_size;
-            painter.vline(x, Rangef::new(matrix.top(), matrix.bottom()), stroke);
+            painter.vline(x, Rangef::new(matrix.top(), matrix.bottom()), grid_stroke);
         }
         for j in 0..=size.height {
             let y = geom.origin.y + j as f32 * geom.cell_size;
-            painter.hline(Rangef::new(matrix.left(), matrix.right()), y, stroke);
+            painter.hline(Rangef::new(matrix.left(), matrix.right()), y, grid_stroke);
         }
     }
 
     // Page guides, drawn on the grid lines over the matrix (spec/12 §12.6).
-    let guide_stroke = Stroke::new(2.0, GUIDE);
-    for guide in &page.guides {
-        if !guide.visible {
-            continue;
+    let guide_stroke = EguiStroke::new(2.0, GUIDE);
+    if let Some((_, page)) = state.selected_context() {
+        for guide in &page.guides {
+            if !guide.visible {
+                continue;
+            }
+            let (a, b) = geom.guide_line(guide.axis, guide.position);
+            painter.line_segment([a, b], guide_stroke);
         }
-        let (a, b) = geom.guide_line(guide.axis, guide.position);
-        painter.line_segment([a, b], guide_stroke);
     }
 
-    // Hover: outline the cell and show its coordinate.
+    // Hover: outline the cell and show its coordinate with a legible backdrop.
     if let Some((x, y)) = response.hover_pos().and_then(|pos| geom.cell_at(pos)) {
         painter.rect_stroke(
             geom.cell_rect(x, y),
             CornerRadius::ZERO,
-            Stroke::new(2.0, HOVER),
+            EguiStroke::new(2.0, HOVER),
             StrokeKind::Inside,
         );
+        let anchor = matrix.left_top() + egui::vec2(4.0, 4.0);
+        let text_rect = painter
+            .text(
+                anchor,
+                Align2::LEFT_TOP,
+                format!("{x}, {y}"),
+                FontId::monospace(12.0),
+                HOVER,
+            )
+            .expand(2.0);
+        painter.rect_filled(
+            text_rect,
+            CornerRadius::same(2),
+            Color32::from_black_alpha(160),
+        );
         painter.text(
-            matrix.left_top() + egui::vec2(4.0, 4.0),
+            anchor,
             Align2::LEFT_TOP,
             format!("{x}, {y}"),
             FontId::monospace(12.0),
             HOVER,
         );
+    }
+}
+
+/// Translates pointer gestures into stroke edits (spec/12 §12.4). A press begins a
+/// stroke whose mode is fixed by the first pixel; dragging extends it (interpolated
+/// so no cell is skipped); release commits it as one `SetPixels` — one undo entry.
+fn handle_input(state: &mut AppState, geom: &MatrixGeometry, response: &egui::Response) {
+    // `is_pointer_button_down_on` stays true while the button that pressed on this
+    // widget is held, even if the pointer wanders off — so a click and a drag are the
+    // same gesture, and dragging outside the matrix simply adds no cells.
+    if response.is_pointer_button_down_on() {
+        if let Some(cell) = response
+            .interact_pointer_pos()
+            .and_then(|pos| geom.cell_at(pos))
+        {
+            if state.active_stroke().is_none() {
+                state.begin_stroke(cell);
+            } else {
+                state.extend_stroke(cell);
+            }
+        }
+    } else if state.active_stroke().is_some() {
+        // Button released (or the gesture ended): commit whatever was painted.
+        state.commit_stroke();
     }
 }
