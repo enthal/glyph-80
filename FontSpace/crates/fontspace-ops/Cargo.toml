@@ -1,0 +1,15 @@
+[package]
+name = "fontspace-ops"
+description = "FontSpace operations: selectors, pixel/glyph commands, and invertible change sets (spec/07)."
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+fontspace-model = { path = "../fontspace-model" }
+thiserror = "2"
+
+[dev-dependencies]
+proptest = "1"

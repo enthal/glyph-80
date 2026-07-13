@@ -99,6 +99,8 @@ pub enum OverflowPolicy { Discard, Wrap }
 
 The initial UI may expose only `Discard`; the core supports both.
 
+**Batch glyph transforms act on materialized glyphs only.** `ShiftGlyphs`, `ClearGlyphs`, and `InvertGlyphs` transform each **stored** glyph within the selection; a selected code with no stored glyph renders blank and is left untouched. In particular `InvertGlyphs` does **not** fill absent codes with all-on glyphs (that would materialize a glyph for every undrawn slot — e.g. an all-on glyph for all 128 ASCII codes). Only glyphs whose bitmap actually changes are recorded in the `ChangeSet`; a transform that leaves a glyph unchanged (a zero shift, clearing an already-blank glyph) contributes nothing.
+
 ## 7.6 Atomicity
 
 Every batch operation is atomic:
