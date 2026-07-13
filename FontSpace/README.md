@@ -25,10 +25,16 @@ Run `fmt`, `clippy`, and `test` before every commit. Treat clippy warnings as er
 
 ## Running
 
-There is nothing to run yet — Milestone 0 ships empty crates. The runnable surfaces arrive with later milestones and this section will grow to match:
+The **CLI** (`fontspace`, from `fontspace-cli`) is the runnable surface today — a thin adapter over the typed operations (spec/13):
 
-- **CLI** (`fontspace-cli`) — Milestone 1. Headless `new` / `info` / `set-pixels` / `shift` / `render-text` / `extract` over `.fontspace.json` documents.
-- **GUI** (`fontspace-egui`) — Milestone 2. The tiled desktop editor.
+```sh
+cargo run -p fontspace-cli -- new demo.fontspace.json --name "Demo"
+cargo run -p fontspace-cli -- info demo.fontspace.json
+cargo run -p fontspace-cli -- render-text demo.fontspace.json --glyph-set "Terminal 8x16" --glyphs 0x41-0x5A
+cargo run -p fontspace-cli -- shift demo.fontspace.json --glyph-set "Terminal 8x16" --pages Regular --glyphs A-Z --dx 1 --dy 0 --dry-run
+```
+
+Mutating commands (`set-pixels`, `shift`) write canonical JSON atomically and support `--dry-run`; `--seq` wires the deterministic id generator for reproducible fixtures. (`extract` and machine-readable JSON errors arrive with later milestones; the GUI, `fontspace-egui`, lands in Milestone 2.)
 
 ## Git pre-commit hook
 
