@@ -2,9 +2,42 @@
 //! begins (spec/07 §7.3). Glyphs are selected primarily by `code` (unambiguous);
 //! `Ordinal` selectors resolve through the referenced character set's order.
 
-use fontspace_model::{CharacterSet, GlyphSet, PageId};
+use fontspace_model::{CharacterSet, FontSpace, GlyphSet, GlyphSetId, PageId};
 
 use crate::FontSpaceError;
+
+/// Resolve a page selector against a glyph set in `doc` — the public query used by
+/// renderers and CLI/MCP adapters (spec/07 §7.3). Returns an ordered, de-duplicated,
+/// validated list of page ids.
+pub fn resolve_pages_in(
+    doc: &FontSpace,
+    glyph_set_id: GlyphSetId,
+    selector: &PageSelector,
+) -> Result<Vec<PageId>, FontSpaceError> {
+    let glyph_set = doc
+        .glyph_set(glyph_set_id)
+        .ok_or(FontSpaceError::GlyphSetNotFound(glyph_set_id))?;
+    resolve_pages(glyph_set, selector)
+}
+
+/// Resolve a glyph selector against a glyph set's referenced character set in `doc`
+/// (spec/07 §7.3). Returns an ordered, de-duplicated, validated list of codes.
+pub fn resolve_glyph_codes_in(
+    doc: &FontSpace,
+    glyph_set_id: GlyphSetId,
+    selector: &GlyphSelector,
+) -> Result<Vec<u32>, FontSpaceError> {
+    let glyph_set = doc
+        .glyph_set(glyph_set_id)
+        .ok_or(FontSpaceError::GlyphSetNotFound(glyph_set_id))?;
+    let character_set = doc.character_set(glyph_set.character_set_id).ok_or(
+        FontSpaceError::CharacterSetNotFound {
+            glyph_set: glyph_set_id,
+            character_set: glyph_set.character_set_id,
+        },
+    )?;
+    resolve_glyph_codes(character_set, selector)
+}
 
 /// Selects pages within a glyph set. `Name`/`Names` are rejected when ambiguous
 /// rather than guessed (spec/07 §7.3).

@@ -35,7 +35,7 @@ Steps:
 - [x] **Glyph sets, pages, glyphs, guides** — sparse pages keyed by `code`, `glyph_of_code`, referential-integrity/uniqueness validation ([spec/03](spec/03-domain-model.md), [spec/04](spec/04-character-sets.md)). — [#5](https://github.com/enthal/glyph-80/pull/5)
 - [x] **JSON layer** — storage structs, visual-row parse/format, canonical writer (deterministic), blank pruning, `format_version` dispatch, migration scaffold. *Round-trip + `save(load(save))==save` + golden tests* ([spec/06](spec/06-json-persistence.md), [spec/15](spec/15-testing.md)). — [#7](https://github.com/enthal/glyph-80/pull/7)
 - [x] **Operations + selectors + change sets** — `SetPixels`, `ShiftGlyphs`, `ClearGlyphs`, `InvertGlyphs`, page ops, guide ops, and the character-set edit ops incl. **remove-cascade** and **recode-warn**; atomic apply; invertible `ChangeSet` ([spec/07](spec/07-operations.md)). *Strict tests for cascade + inversion.* — glyph ops [#8](https://github.com/enthal/glyph-80/pull/8), page + guide ops [#9](https://github.com/enthal/glyph-80/pull/9), charset entry ops [#10](https://github.com/enthal/glyph-80/pull/10), remove-cascade [#11](https://github.com/enthal/glyph-80/pull/11).
-- [ ] **Text-grid render** ([spec/09](spec/09-rendering.md)).
+- [x] **Text-grid render** ([spec/09](spec/09-rendering.md)). — [#12](https://github.com/enthal/glyph-80/pull/12)
 - [ ] **CLI** — `new`, `info`, `set-pixels`, `shift`, `render-text`, `extract`; atomic writes; `--dry-run`; JSON errors ([spec/13](spec/13-cli-and-mcp.md)).
 
 Definition of done: the Milestone-1 integration test (create → edit → save → reopen → render, via library and CLI, byte-identical) passes; property tests green; a committed golden ASCII document diffs cleanly.
