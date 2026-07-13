@@ -138,9 +138,10 @@ impl GuideChange {
     }
 }
 
-/// A character set's ordered entries changing from `before` to `after`. Covers add,
-/// reorder, relabel, and recode of entries — all of which mutate only the entry list
-/// (spec/04 §4.4); the cascade-remove additionally emits glyph changes.
+/// A character set's ordered entries changing from `before` to `after`. Every
+/// entry-list edit (add/reorder/recode now, relabel and cascade-remove later)
+/// reuses it — the list mutation is captured whole (spec/04 §4.4, spec/07 §7.7);
+/// the cascade-remove additionally emits glyph changes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CharacterSetChange {
     pub character_set_id: CharacterSetId,

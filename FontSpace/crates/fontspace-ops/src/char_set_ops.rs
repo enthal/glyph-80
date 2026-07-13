@@ -13,6 +13,7 @@ use crate::change_set::{
     ChangeSet, CharacterSetChange, FontSpaceWarning, ObjectChange, OrphanedGlyph,
 };
 use crate::error::FontSpaceError;
+use crate::util::is_permutation;
 
 /// Add an entry to a character set at `at_index` (or the end). No glyph changes; the
 /// new code renders blank until a glyph is drawn (spec/04 §4.4).
@@ -94,7 +95,7 @@ pub fn reorder_character_entries(
             .ok_or(FontSpaceError::CharacterSetIdNotFound(req.character_set_id))?;
         let before = character_set.entries.clone();
         let current: Vec<u32> = before.iter().map(|entry| entry.code).collect();
-        if !is_code_permutation(&req.order, &current) {
+        if !is_permutation(&req.order, &current) {
             return Err(FontSpaceError::InvalidEntryOrder {
                 character_set: req.character_set_id,
                 expected: before.len(),
@@ -218,14 +219,4 @@ fn apply_single(doc: &mut FontSpace, change: ObjectChange) -> Result<ChangeSet, 
     };
     apply_change_set(doc, &change_set)?;
     Ok(change_set)
-}
-
-/// Whether `candidate` is a permutation of `current` codes (same length, same set,
-/// no duplicates in `candidate`). Entry codes are unique, so this is exact.
-fn is_code_permutation(candidate: &[u32], current: &[u32]) -> bool {
-    use std::collections::HashSet;
-    let candidate_set: HashSet<u32> = candidate.iter().copied().collect();
-    candidate.len() == current.len()
-        && candidate_set.len() == candidate.len()
-        && current.iter().all(|code| candidate_set.contains(code))
 }

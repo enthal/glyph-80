@@ -851,6 +851,35 @@ fn recode_entry_warns_about_orphaned_glyph_and_moves_nothing() {
 }
 
 #[test]
+fn recode_finds_orphans_on_every_page() {
+    let mut f = fixture();
+    // Draw a second 0x41 glyph on the Bold page, so both pages hold one.
+    let size = f.doc.glyph_sets[0].glyph_size;
+    let mut mark = Bitmap::new_blank(size);
+    mark.set(0, 0, true).unwrap();
+    f.doc.glyph_sets[0].pages[1].glyphs.push(Glyph {
+        code: 0x41,
+        bitmap: mark,
+    });
+    let change_set = recode_character_entry(
+        &mut f.doc,
+        &RecodeCharacterEntry {
+            character_set_id: f.character_set,
+            from_code: 0x41,
+            to_code: 0x50,
+        },
+    )
+    .unwrap();
+    // Single-variant enum, so this destructuring let is irrefutable.
+    let FontSpaceWarning::RecodeOrphanedGlyphs { orphaned, .. } = &change_set.warnings[0];
+    assert_eq!(
+        orphaned.len(),
+        2,
+        "orphans found on both Regular and Bold pages"
+    );
+}
+
+#[test]
 fn recode_to_same_code_is_a_noop() {
     let mut f = fixture();
     let change_set = recode_character_entry(

@@ -16,6 +16,7 @@ mod glyph_ops;
 mod guide_ops;
 mod page_ops;
 mod selector;
+mod util;
 
 use std::collections::HashMap;
 
