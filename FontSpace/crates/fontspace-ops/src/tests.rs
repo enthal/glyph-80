@@ -2,20 +2,23 @@
 //! and exact change-set inversion (undo). All ids from `SequentialIdGen`.
 
 use fontspace_model::{
-    Bitmap, CharacterEntry, CharacterSet, FontSpace, Glyph, GlyphPage, GlyphSet, GlyphSetId,
-    GlyphSize, GuideAxis, OverflowPolicy, PageId, SequentialIdGen,
+    Bitmap, CharacterEntry, CharacterSet, CharacterSetId, FontSpace, Glyph, GlyphPage, GlyphSet,
+    GlyphSetId, GlyphSize, GuideAxis, OverflowPolicy, PageId, SequentialIdGen,
 };
 use proptest::prelude::*;
 
 use crate::{
-    AddGuide, AddPage, ClearGlyphs, CopyGuideToPages, FontSpaceError, GlyphRef, GlyphSelector,
-    InvertGlyphs, MoveGuide, PageSelector, PixelEdit, RemovePages, ReorderPages, SetPixels,
-    ShiftGlyphs, add_guide, add_page, clear_glyphs, copy_guide_to_pages, invert_glyphs, move_guide,
-    remove_pages, reorder_pages, set_pixels, shift_glyphs, undo,
+    AddCharacterEntry, AddGuide, AddPage, ClearGlyphs, CopyGuideToPages, FontSpaceError,
+    FontSpaceWarning, GlyphRef, GlyphSelector, InvertGlyphs, MoveGuide, PageSelector, PixelEdit,
+    RecodeCharacterEntry, RemovePages, ReorderCharacterEntries, ReorderPages, SetPixels,
+    ShiftGlyphs, add_character_entry, add_guide, add_page, clear_glyphs, copy_guide_to_pages,
+    invert_glyphs, move_guide, recode_character_entry, remove_pages, reorder_character_entries,
+    reorder_pages, set_pixels, shift_glyphs, undo,
 };
 
 struct Fixture {
     doc: FontSpace,
+    character_set: CharacterSetId,
     glyph_set: GlyphSetId,
     regular: PageId,
     bold: PageId,
@@ -60,11 +63,13 @@ fn fixture() -> Fixture {
     glyph_set.pages.push(regular);
     glyph_set.pages.push(bold);
 
+    let character_set_id = character_set.id;
     let mut doc = FontSpace::new(&mut ids, "doc", "");
     doc.character_sets.push(character_set);
     doc.glyph_sets.push(glyph_set);
     Fixture {
         doc,
+        character_set: character_set_id,
         glyph_set: glyph_set_id,
         regular: regular_id,
         bold: bold_id,
@@ -698,6 +703,202 @@ fn copy_guide_to_pages_mints_fresh_ids_and_skips_source() {
     assert_eq!(copied.position, 6);
     undo(&mut f.doc, &change_set).unwrap();
     assert_eq!(f.doc, before, "undo removes every copied guide");
+}
+
+// --- Character-set entry operations (add / reorder / recode) ---
+
+#[test]
+fn add_character_entry_and_undo() {
+    let mut f = fixture();
+    let before = f.doc.clone();
+    let change_set = add_character_entry(
+        &mut f.doc,
+        &AddCharacterEntry {
+            character_set_id: f.character_set,
+            code: 0x44,
+            label: "D".into(),
+            at_index: None,
+        },
+    )
+    .unwrap();
+    assert!(f.doc.character_sets[0].contains_code(0x44));
+    undo(&mut f.doc, &change_set).unwrap();
+    assert_eq!(
+        f.doc, before,
+        "undo of add entry removes it; no glyph changes"
+    );
+}
+
+#[test]
+fn add_duplicate_entry_code_errors() {
+    let mut f = fixture();
+    let err = add_character_entry(
+        &mut f.doc,
+        &AddCharacterEntry {
+            character_set_id: f.character_set,
+            code: 0x41, // already present
+            label: "A2".into(),
+            at_index: None,
+        },
+    )
+    .unwrap_err();
+    assert!(matches!(
+        err,
+        FontSpaceError::DuplicateEntryCode { code: 0x41, .. }
+    ));
+}
+
+#[test]
+fn reorder_entries_touches_no_glyphs_and_undoes() {
+    let mut f = fixture();
+    let before = f.doc.clone();
+    let glyph_before = f.doc.glyph_sets[0].pages[0]
+        .glyph_of_code(0x41)
+        .unwrap()
+        .bitmap
+        .clone();
+    let change_set = reorder_character_entries(
+        &mut f.doc,
+        &ReorderCharacterEntries {
+            character_set_id: f.character_set,
+            order: vec![0x43, 0x42, 0x41],
+        },
+    )
+    .unwrap();
+    // Entry order changed...
+    let codes: Vec<u32> = f.doc.character_sets[0]
+        .entries
+        .iter()
+        .map(|e| e.code)
+        .collect();
+    assert_eq!(codes, vec![0x43, 0x42, 0x41]);
+    // ...but the glyph is untouched (code identity, not ordinal).
+    assert_eq!(
+        f.doc.glyph_sets[0].pages[0]
+            .glyph_of_code(0x41)
+            .unwrap()
+            .bitmap,
+        glyph_before
+    );
+    undo(&mut f.doc, &change_set).unwrap();
+    assert_eq!(f.doc, before);
+}
+
+#[test]
+fn reorder_entries_rejects_non_permutation() {
+    let mut f = fixture();
+    let err = reorder_character_entries(
+        &mut f.doc,
+        &ReorderCharacterEntries {
+            character_set_id: f.character_set,
+            order: vec![0x41, 0x42], // missing 0x43
+        },
+    )
+    .unwrap_err();
+    assert!(matches!(
+        err,
+        FontSpaceError::InvalidEntryOrder { expected: 3, .. }
+    ));
+}
+
+#[test]
+fn recode_entry_warns_about_orphaned_glyph_and_moves_nothing() {
+    let mut f = fixture();
+    let glyph_before = f.doc.glyph_sets[0].pages[0]
+        .glyph_of_code(0x41)
+        .unwrap()
+        .bitmap
+        .clone();
+    let before = f.doc.clone();
+    // 0x41 has a drawn glyph; recoding the entry 0x41 -> 0x50 orphans it.
+    let change_set = recode_character_entry(
+        &mut f.doc,
+        &RecodeCharacterEntry {
+            character_set_id: f.character_set,
+            from_code: 0x41,
+            to_code: 0x50,
+        },
+    )
+    .unwrap();
+    // Entry recoded.
+    assert!(f.doc.character_sets[0].contains_code(0x50));
+    assert!(!f.doc.character_sets[0].contains_code(0x41));
+    // Glyph data untouched — the 0x41 glyph is still there (now dangling), unchanged.
+    assert_eq!(
+        f.doc.glyph_sets[0].pages[0]
+            .glyph_of_code(0x41)
+            .unwrap()
+            .bitmap,
+        glyph_before
+    );
+    // Warned about the orphan.
+    assert_eq!(change_set.warnings.len(), 1);
+    let FontSpaceWarning::RecodeOrphanedGlyphs {
+        orphaned,
+        from_code: 0x41,
+        to_code: 0x50,
+        ..
+    } = &change_set.warnings[0]
+    else {
+        panic!("expected RecodeOrphanedGlyphs");
+    };
+    assert_eq!(orphaned.len(), 1);
+    undo(&mut f.doc, &change_set).unwrap();
+    assert_eq!(
+        f.doc, before,
+        "undo restores the entry code; glyph never moved"
+    );
+}
+
+#[test]
+fn recode_to_same_code_is_a_noop() {
+    let mut f = fixture();
+    let change_set = recode_character_entry(
+        &mut f.doc,
+        &RecodeCharacterEntry {
+            character_set_id: f.character_set,
+            from_code: 0x41,
+            to_code: 0x41,
+        },
+    )
+    .unwrap();
+    assert!(change_set.is_empty());
+}
+
+#[test]
+fn recode_to_existing_code_errors() {
+    let mut f = fixture();
+    let err = recode_character_entry(
+        &mut f.doc,
+        &RecodeCharacterEntry {
+            character_set_id: f.character_set,
+            from_code: 0x41,
+            to_code: 0x42, // already an entry
+        },
+    )
+    .unwrap_err();
+    assert!(matches!(
+        err,
+        FontSpaceError::DuplicateEntryCode { code: 0x42, .. }
+    ));
+}
+
+#[test]
+fn recode_from_missing_code_errors() {
+    let mut f = fixture();
+    let err = recode_character_entry(
+        &mut f.doc,
+        &RecodeCharacterEntry {
+            character_set_id: f.character_set,
+            from_code: 0x99, // no such entry
+            to_code: 0x50,
+        },
+    )
+    .unwrap_err();
+    assert!(matches!(
+        err,
+        FontSpaceError::EntryCodeNotFound { code: 0x99, .. }
+    ));
 }
 
 // --- Property test: every operation's change set inverts exactly (spec/07 §7.7) ---

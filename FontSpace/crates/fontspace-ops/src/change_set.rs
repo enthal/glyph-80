@@ -4,7 +4,9 @@
 //! Slices 4a–4b cover glyph, page, and guide edits. The character-set and export
 //! change variants join [`ObjectChange`] in the later operation slices.
 
-use fontspace_model::{Bitmap, GlyphPage, GlyphSetId, Guide, GuideId, PageId};
+use fontspace_model::{
+    Bitmap, CharacterEntry, CharacterSetId, GlyphPage, GlyphSetId, Guide, GuideId, PageId,
+};
 
 /// The invertible result of one operation. Empty when the operation was a no-op.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -42,6 +44,7 @@ pub enum ObjectChange {
     PageRemoved(PageChange),
     PagesReordered(PagesReorder),
     GuideChanged(GuideChange),
+    CharacterSetChanged(CharacterSetChange),
 }
 
 impl ObjectChange {
@@ -53,6 +56,9 @@ impl ObjectChange {
             ObjectChange::PageRemoved(change) => ObjectChange::PageInserted(change.clone()),
             ObjectChange::PagesReordered(change) => ObjectChange::PagesReordered(change.inverted()),
             ObjectChange::GuideChanged(change) => ObjectChange::GuideChanged(change.inverted()),
+            ObjectChange::CharacterSetChanged(change) => {
+                ObjectChange::CharacterSetChanged(change.inverted())
+            }
         }
     }
 }
@@ -132,8 +138,44 @@ impl GuideChange {
     }
 }
 
-/// A non-fatal warning attached to a change set (spec/07 §7.7). Uninhabited through
-/// slice 4b — glyph/page/guide edits never warn; the recode-orphan and remove-cascade
-/// warnings arrive with the character-set operation slice.
+/// A character set's ordered entries changing from `before` to `after`. Covers add,
+/// reorder, relabel, and recode of entries — all of which mutate only the entry list
+/// (spec/04 §4.4); the cascade-remove additionally emits glyph changes.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum FontSpaceWarning {}
+pub struct CharacterSetChange {
+    pub character_set_id: CharacterSetId,
+    pub before: Vec<CharacterEntry>,
+    pub after: Vec<CharacterEntry>,
+}
+
+impl CharacterSetChange {
+    fn inverted(&self) -> CharacterSetChange {
+        CharacterSetChange {
+            character_set_id: self.character_set_id,
+            before: self.after.clone(),
+            after: self.before.clone(),
+        }
+    }
+}
+
+/// A glyph left dangling (its `code` no longer has an entry) by a recode — reported,
+/// never moved or deleted (spec/04 §4.4).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OrphanedGlyph {
+    pub glyph_set_id: GlyphSetId,
+    pub page_id: PageId,
+    pub code: u32,
+}
+
+/// A non-fatal warning attached to a change set (spec/07 §7.7).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FontSpaceWarning {
+    /// A `RecodeCharacterEntry` changed an entry's `code`, leaving glyphs that still
+    /// reference the old code dangling. They are listed, not moved (spec/04 §4.4).
+    RecodeOrphanedGlyphs {
+        character_set_id: CharacterSetId,
+        from_code: u32,
+        to_code: u32,
+        orphaned: Vec<OrphanedGlyph>,
+    },
+}
