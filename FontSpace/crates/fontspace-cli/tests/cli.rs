@@ -11,6 +11,7 @@ use fontspace_model::{
     SequentialIdGen,
 };
 use fontspace_ops::{GlyphSelector, PageSelector, ShiftGlyphs, shift_glyphs};
+use fontspace_render::{RenderLayout, TextGridRequest, render_text_grid};
 
 /// A small document: character set (0x41, 0x42), an 8×8 glyph set named "gs" with a
 /// "Regular" page holding a drawn glyph for 0x41.
@@ -39,6 +40,7 @@ fn sample_doc() -> FontSpace {
         bitmap: a,
     });
     gs.pages.push(page);
+    gs.pages.push(GlyphPage::new(&mut ids, "Bold", "")); // a second, empty page
     let mut doc = FontSpace::new(&mut ids, "doc", "");
     doc.character_sets.push(cs);
     doc.glyph_sets.push(gs);
@@ -121,10 +123,28 @@ fn cli_render_text_matches_render_crate() {
         .unwrap();
     assert!(output.status.success());
     let rendered = String::from_utf8(output.stdout).unwrap();
-    // Three on-pixels on the diagonal; a trailing newline from println!.
-    let expected =
-        "........\n.#......\n..#.....\n...#....\n........\n........\n........\n........\n";
-    assert_eq!(rendered, expected);
+
+    // Compare against the render crate directly, using the CLI's defaults; the CLI
+    // adds one trailing newline via println!.
+    let glyph_set_id = doc.glyph_sets[0].id;
+    let via_library = render_text_grid(
+        &doc,
+        &TextGridRequest {
+            glyph_set_id,
+            pages: PageSelector::All,
+            glyphs: GlyphSelector::Code(0x41),
+            on: "#".into(),
+            off: ".".into(),
+            glyph_separator: String::new(),
+            row_separator: "\n".into(),
+            page_separator: "\n\n".into(),
+            layout: RenderLayout::GlyphsHorizontal,
+            scale_x: 1,
+            scale_y: 1,
+        },
+    )
+    .unwrap();
+    assert_eq!(rendered, format!("{via_library}\n"));
     fs::remove_dir_all(path.parent().unwrap()).ok();
 }
 
@@ -159,6 +179,49 @@ fn cli_dry_run_does_not_write() {
         original,
         "--dry-run must not write"
     );
+    fs::remove_dir_all(path.parent().unwrap()).ok();
+}
+
+#[test]
+fn cli_new_refuses_to_overwrite() {
+    let path = temp_path("new-exists");
+    fs::write(&path, "existing content").unwrap();
+    let status = Command::new(env!("CARGO_BIN_EXE_fontspace"))
+        .args(["new", path.to_str().unwrap(), "--name", "X"])
+        .status()
+        .unwrap();
+    assert!(
+        !status.success(),
+        "new must refuse to overwrite an existing file"
+    );
+    assert_eq!(fs::read_to_string(&path).unwrap(), "existing content");
+    fs::remove_dir_all(path.parent().unwrap()).ok();
+}
+
+#[test]
+fn cli_set_pixels_rejects_multi_page_selector() {
+    let doc = sample_doc(); // has two pages
+    let path = temp_path("setpx-multi");
+    let original = fontspace_json::save(&doc);
+    fs::write(&path, &original).unwrap();
+    // --page all resolves to two pages; set-pixels must reject it, not narrow.
+    let status = Command::new(env!("CARGO_BIN_EXE_fontspace"))
+        .args([
+            "set-pixels",
+            path.to_str().unwrap(),
+            "--glyph-set",
+            "gs",
+            "--page",
+            "all",
+            "--code",
+            "0x41",
+            "--pixel",
+            "0,0,1",
+        ])
+        .status()
+        .unwrap();
+    assert!(!status.success(), "multi-page --page must be rejected");
+    assert_eq!(fs::read_to_string(&path).unwrap(), original);
     fs::remove_dir_all(path.parent().unwrap()).ok();
 }
 

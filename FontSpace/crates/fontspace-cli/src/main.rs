@@ -120,6 +120,10 @@ enum CliError {
     Op(#[from] FontSpaceError),
     #[error("i/o error: {0}")]
     Io(#[from] std::io::Error),
+    #[error("{0} already exists (refusing to overwrite; delete it first)")]
+    FileExists(String),
+    #[error("set-pixels needs exactly one target page, but --page matched {count}")]
+    PageTargetNotUnique { count: usize },
 }
 
 fn main() -> ExitCode {
@@ -150,6 +154,11 @@ fn run(cli: Cli) -> Result<(), CliError> {
             if cli.dry_run {
                 print!("{}", save_json(&doc));
             } else {
+                // Never clobber an existing document (spec/16 §16.2 — user files
+                // are never corrupted).
+                if path.exists() {
+                    return Err(CliError::FileExists(path.display().to_string()));
+                }
                 write_document(&path, &doc)?;
                 println!("created {}", path.display());
             }
@@ -171,14 +180,14 @@ fn run(cli: Cli) -> Result<(), CliError> {
         } => {
             let mut doc = load_document(&path)?;
             let glyph_set_id = resolve_glyph_set(&doc, &glyph_set)?;
-            // Resolve the page by name through ops (rejects ambiguity precisely).
-            let page_id = resolve_pages_in(&doc, glyph_set_id, &parse_page_selector(&page))?
-                .into_iter()
-                .next()
-                .ok_or(FontSpaceError::PageNameNotFound {
-                    glyph_set: glyph_set_id,
-                    name: page.clone(),
-                })?;
+            // set-pixels targets one glyph on one page: the --page selector must
+            // resolve to exactly one page — never silently narrow a list (CLAUDE.md
+            // "no hidden remapping"). Ambiguous duplicate names are rejected by ops.
+            let resolved = resolve_pages_in(&doc, glyph_set_id, &parse_page_selector(&page))?;
+            let page_id = match resolved.as_slice() {
+                [only] => *only,
+                other => return Err(CliError::PageTargetNotUnique { count: other.len() }),
+            };
             let code = parse_code_token(&code)?;
             let edits = pixels
                 .iter()
