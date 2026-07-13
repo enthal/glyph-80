@@ -1,0 +1,74 @@
+name: fontspace
+
+# Path-filtered so it runs only when FontSpace (or this workflow) changes.
+# NOTE (spec/19.5): once a second sub-project or a root-only PR exists, a PR that
+# touches no FontSpace files will leave these required contexts pending forever.
+# The fix then is a non-path-filtered status-sentinel job (or a merge queue).
+# Until then every PR touches FontSpace/**, so this is a revisit note, not a blocker.
+on:
+  pull_request:
+    paths:
+      - "FontSpace/**"
+      - ".github/workflows/fontspace-ci.yml"
+  push:
+    branches: [main]
+    paths:
+      - "FontSpace/**"
+      - ".github/workflows/fontspace-ci.yml"
+
+# The toolchain (1.95.0 + rustfmt + clippy) is pinned by FontSpace/rust-toolchain.toml;
+# rustup auto-installs it on the first cargo invocation in that directory.
+defaults:
+  run:
+    working-directory: FontSpace
+
+concurrency:
+  group: fontspace-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fmt:
+    name: fmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: cargo fmt --all --check
+        run: cargo fmt --all --check
+
+  clippy:
+    name: clippy
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: FontSpace
+      - name: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+  test:
+    name: test
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: FontSpace
+      - name: cargo test --workspace
+        run: cargo test --workspace
+
+  markdown:
+    name: markdown
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: markdown no-hardwrap lint
+        run: scripts/markdown-no-hardwrap.sh

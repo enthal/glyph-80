@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Repo-root git pre-commit dispatcher, installed into .git/hooks/ by cargo-husky
+# on the first `cargo test` inside FontSpace/ (dev-dependency of fontspace-cli).
+#
+# Git hooks are repo-global, so this dispatches per sub-project: each sub-project
+# contributes a check script that runs only when its files are staged. FontSpace
+# is the first such sub-project; add more branches here as later ones land.
+#
+# Opt-in per clone: run `cargo test` once inside FontSpace/ to install this hook.
+# Bypass a single commit with `git commit --no-verify` (only when intended).
+set -euo pipefail
+
+staged="$(git diff --cached --name-only)"
+
+if grep -q '^FontSpace/' <<<"$staged"; then
+  FontSpace/scripts/precommit.sh
+fi
