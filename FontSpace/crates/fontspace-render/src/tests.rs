@@ -150,6 +150,132 @@ fn grid_wraps_into_columns() {
 }
 
 #[test]
+fn scale_y_repeats_rows() {
+    let (doc, gs) = fixture();
+    let mut req = base(
+        gs,
+        GlyphSelector::Code(0x41),
+        RenderLayout::GlyphsHorizontal,
+    );
+    req.scale_y = 2;
+    assert_eq!(
+        render_text_grid(&doc, &req).unwrap(),
+        "#.#\n#.#\n.#.\n.#.\n#.#\n#.#"
+    );
+}
+
+/// A glyph set with two pages: Regular draws 0x41, Bold draws 0x42 (the top row),
+/// so page-level layouts have visibly different pages.
+fn two_page_fixture() -> (FontSpace, GlyphSetId) {
+    let mut ids = SequentialIdGen::new();
+    let mut character_set = CharacterSet::new(&mut ids, "cs", "");
+    character_set.entries = vec![
+        CharacterEntry {
+            code: 0x41,
+            label: "A".into(),
+        },
+        CharacterEntry {
+            code: 0x42,
+            label: "B".into(),
+        },
+    ];
+    let size = GlyphSize::new(3, 3);
+    let mut glyph_set = GlyphSet::new(&mut ids, "gs", "", size, character_set.id);
+
+    let mut regular = GlyphPage::new(&mut ids, "Regular", "");
+    let mut a = Bitmap::new_blank(size);
+    for (x, y) in [(0, 0), (2, 0), (1, 1), (0, 2), (2, 2)] {
+        a.set(x, y, true).unwrap();
+    }
+    regular.glyphs.push(Glyph {
+        code: 0x41,
+        bitmap: a,
+    });
+
+    let mut bold = GlyphPage::new(&mut ids, "Bold", "");
+    let mut b = Bitmap::new_blank(size);
+    for x in 0..3 {
+        b.set(x, 0, true).unwrap(); // top row on
+    }
+    bold.glyphs.push(Glyph {
+        code: 0x42,
+        bitmap: b,
+    });
+
+    glyph_set.pages.push(regular);
+    glyph_set.pages.push(bold);
+
+    let glyph_set_id = glyph_set.id;
+    let mut doc = FontSpace::new(&mut ids, "doc", "");
+    doc.character_sets.push(character_set);
+    doc.glyph_sets.push(glyph_set);
+    (doc, glyph_set_id)
+}
+
+#[test]
+fn pages_vertical_stacks_pages_with_page_separator() {
+    let (doc, gs) = two_page_fixture();
+    // Render 0x41 on both pages: Regular has it (X), Bold does not (blank).
+    let mut req = base(gs, GlyphSelector::Code(0x41), RenderLayout::PagesVertical);
+    req.page_separator = "==".into();
+    assert_eq!(
+        render_text_grid(&doc, &req).unwrap(),
+        "#.#\n.#.\n#.#\n==\n...\n...\n..."
+    );
+}
+
+#[test]
+fn pages_horizontal_places_pages_side_by_side() {
+    let (doc, gs) = two_page_fixture();
+    let mut req = base(gs, GlyphSelector::Code(0x41), RenderLayout::PagesHorizontal);
+    req.page_separator = " || ".into();
+    assert_eq!(
+        render_text_grid(&doc, &req).unwrap(),
+        "#.# || ...\n.#. || ...\n#.# || ..."
+    );
+}
+
+#[test]
+fn grid_wraps_after_columns() {
+    // Three codes, 2 columns => first row [0x41, 0x42], second row [0x43].
+    let mut ids = SequentialIdGen::new();
+    let mut character_set = CharacterSet::new(&mut ids, "cs", "");
+    character_set.entries = vec![
+        CharacterEntry {
+            code: 0x41,
+            label: "A".into(),
+        },
+        CharacterEntry {
+            code: 0x42,
+            label: "B".into(),
+        },
+        CharacterEntry {
+            code: 0x43,
+            label: "C".into(),
+        },
+    ];
+    let size = GlyphSize::new(1, 1);
+    let mut glyph_set = GlyphSet::new(&mut ids, "gs", "", size, character_set.id);
+    let mut page = GlyphPage::new(&mut ids, "Regular", "");
+    // Draw 0x41 and 0x43 (on), leave 0x42 blank (off), so the row content differs.
+    for code in [0x41u32, 0x43] {
+        let mut bmp = Bitmap::new_blank(size);
+        bmp.set(0, 0, true).unwrap();
+        page.glyphs.push(Glyph { code, bitmap: bmp });
+    }
+    glyph_set.pages.push(page);
+    let gs = glyph_set.id;
+    let mut doc = FontSpace::new(&mut ids, "doc", "");
+    doc.character_sets.push(character_set);
+    doc.glyph_sets.push(glyph_set);
+
+    let mut req = base(gs, GlyphSelector::All, RenderLayout::Grid { columns: 2 });
+    req.glyph_separator = "|".into();
+    // Row of glyphs [# , .] then wrap to [#]; glyph rows joined by the separator too.
+    assert_eq!(render_text_grid(&doc, &req).unwrap(), "#|.\n|\n#");
+}
+
+#[test]
 fn unknown_glyph_set_errors() {
     let (doc, _gs) = fixture();
     let mut ids = SequentialIdGen::new();
