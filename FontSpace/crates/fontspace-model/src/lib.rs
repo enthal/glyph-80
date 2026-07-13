@@ -2,6 +2,26 @@
 
 //! Core document and value types for FontSpace.
 //!
-//! Empty at Milestone 0 (workspace bootstrap). The domain model — value types,
-//! typed IDs, id/RNG injection, `Bitmap`, character sets, glyph sets, and pages —
-//! lands in Milestone 1. See `FontSpace/spec/03-domain-model.md`.
+//! This crate is the base of the inward-dependency stack (spec/02): it defines the
+//! value types, typed IDs, id injection, and the `Bitmap`, and depends on no other
+//! FontSpace crate and on nothing GUI. The document aggregate (character sets,
+//! glyph sets, pages, glyphs, guides) and operations land in later Milestone-1
+//! slices; this slice establishes the foundations they build on.
+//!
+//! See `FontSpace/spec/` — start with `17-invariants-and-glossary.md`, then `03`,
+//! `05`, and `16`.
+
+mod bitmap;
+mod color;
+mod geometry;
+mod ids;
+mod limits;
+
+pub use bitmap::{Bitmap, BitmapError, OverflowPolicy, flipped, inverted, shifted};
+pub use color::Rgba;
+pub use geometry::{GlyphSize, GlyphSizeError, GuideAxis};
+pub use ids::{
+    CharacterSetId, ExportComponentId, ExportConfigId, FontSpaceId, GlyphSetId, GuideId, IdGen,
+    PageId, RandomIdGen, SequentialIdGen,
+};
+pub use limits::Limits;
