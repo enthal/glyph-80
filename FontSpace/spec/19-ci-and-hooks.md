@@ -43,6 +43,8 @@ Jobs (all `working-directory: FontSpace`, toolchain pinned by `rust-toolchain.to
 
 The **OS matrix is required**, not cosmetic: without a macOS runner the `muda` menu path (chapter 18 §18.4) never compiles in CI; without Linux the desktop-integration path (§18.5) doesn't. Both are `cfg`-gated, so only the matching runner type-checks them.
 
+**Regenerating snapshot baselines.** Because snapshots are pinned to Linux/lavapipe (chapter 15 §15.6), baselines are baked in a container whose renderer matches the runner — not on a developer's macOS host. Run the snapshot tests with `UPDATE_SNAPSHOTS=1` inside an `ubuntu:24.04` container (the `ubuntu-latest` base) with `mesa-vulkan-drivers` + `libvulkan1` installed and `WGPU_BACKEND=vulkan`, mounting the repo so the regenerated `.png` lands in the tree. Review every changed `.png` before committing. (Lavapipe is a software rasterizer, so an arm64 build host is acceptable in practice — the `failed_pixel_count_threshold` absorbs the residual cross-arch AA jitter — but matching the runner's arch with a `linux/amd64` container removes the variable if a diff ever bites.)
+
 Fuzz targets ([15](15-testing.md) §15.7) are **not** a PR gate — they run on a schedule or on demand, not on every PR.
 
 ## 19.4 Branch protection contexts

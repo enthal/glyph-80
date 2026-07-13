@@ -61,6 +61,9 @@ jobs:
     # Vulkan driver (lavapipe) so headless runners can rasterize; macOS uses Metal.
     # The snapshots are pinned to Linux (see crates/fontspace-egui/tests/snapshot.rs),
     # so these vars are inert on the macOS leg.
+    #   WGPU_BACKEND=vulkan       selects lavapipe (the software Vulkan ICD below).
+    #   LIBGL_ALWAYS_SOFTWARE=1   belt-and-suspenders for any incidental GL init;
+    #                             the wgpu snapshot path itself is Vulkan, not GL.
     env:
       WGPU_BACKEND: vulkan
       LIBGL_ALWAYS_SOFTWARE: "1"
