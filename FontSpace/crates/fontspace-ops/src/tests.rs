@@ -3,13 +3,15 @@
 
 use fontspace_model::{
     Bitmap, CharacterEntry, CharacterSet, FontSpace, Glyph, GlyphPage, GlyphSet, GlyphSetId,
-    GlyphSize, OverflowPolicy, PageId, SequentialIdGen,
+    GlyphSize, GuideAxis, OverflowPolicy, PageId, SequentialIdGen,
 };
 use proptest::prelude::*;
 
 use crate::{
-    ClearGlyphs, FontSpaceError, GlyphRef, GlyphSelector, InvertGlyphs, PageSelector, PixelEdit,
-    SetPixels, ShiftGlyphs, clear_glyphs, invert_glyphs, set_pixels, shift_glyphs, undo,
+    AddGuide, AddPage, ClearGlyphs, CopyGuideToPages, FontSpaceError, GlyphRef, GlyphSelector,
+    InvertGlyphs, MoveGuide, PageSelector, PixelEdit, RemovePages, ReorderPages, SetPixels,
+    ShiftGlyphs, add_guide, add_page, clear_glyphs, copy_guide_to_pages, invert_glyphs, move_guide,
+    remove_pages, reorder_pages, set_pixels, shift_glyphs, undo,
 };
 
 struct Fixture {
@@ -17,6 +19,7 @@ struct Fixture {
     glyph_set: GlyphSetId,
     regular: PageId,
     bold: PageId,
+    ids: SequentialIdGen,
 }
 
 /// A glyph set over codes 0x41/0x42/0x43, two pages ("Regular", "Bold"), with a
@@ -65,6 +68,7 @@ fn fixture() -> Fixture {
         glyph_set: glyph_set_id,
         regular: regular_id,
         bold: bold_id,
+        ids,
     }
 }
 
@@ -432,6 +436,268 @@ fn code_range_selects_entries_within_range() {
             .get(1, 1)
             .unwrap()
     );
+}
+
+// --- Page operations ---
+
+#[test]
+fn add_page_appends_and_undo_removes() {
+    let mut f = fixture();
+    let before = f.doc.clone();
+    let change_set = add_page(
+        &mut f.doc,
+        &AddPage {
+            glyph_set_id: f.glyph_set,
+            name: "Italic".into(),
+            description: String::new(),
+            at_index: None,
+        },
+        &mut f.ids,
+    )
+    .unwrap();
+    assert_eq!(f.doc.glyph_sets[0].pages.len(), 3);
+    assert_eq!(f.doc.glyph_sets[0].pages[2].name, "Italic");
+    undo(&mut f.doc, &change_set).unwrap();
+    assert_eq!(f.doc, before, "undo of add_page removes the page");
+}
+
+#[test]
+fn add_page_at_index_inserts_there() {
+    let mut f = fixture();
+    add_page(
+        &mut f.doc,
+        &AddPage {
+            glyph_set_id: f.glyph_set,
+            name: "First".into(),
+            description: String::new(),
+            at_index: Some(0),
+        },
+        &mut f.ids,
+    )
+    .unwrap();
+    assert_eq!(f.doc.glyph_sets[0].pages[0].name, "First");
+    assert_eq!(f.doc.glyph_sets[0].pages[1].name, "Regular");
+}
+
+#[test]
+fn remove_pages_and_undo_restores_positions() {
+    let mut f = fixture();
+    let before = f.doc.clone();
+    // Remove the Regular page (index 0), keeping Bold.
+    let change_set = remove_pages(
+        &mut f.doc,
+        &RemovePages {
+            glyph_set_id: f.glyph_set,
+            pages: PageSelector::Name("Regular".into()),
+        },
+    )
+    .unwrap();
+    assert_eq!(f.doc.glyph_sets[0].pages.len(), 1);
+    assert_eq!(f.doc.glyph_sets[0].pages[0].name, "Bold");
+    undo(&mut f.doc, &change_set).unwrap();
+    assert_eq!(
+        f.doc, before,
+        "undo restores the page at its original index, with glyphs"
+    );
+}
+
+#[test]
+fn reorder_pages_and_undo() {
+    let mut f = fixture();
+    let before = f.doc.clone();
+    let change_set = reorder_pages(
+        &mut f.doc,
+        &ReorderPages {
+            glyph_set_id: f.glyph_set,
+            order: vec![f.bold, f.regular],
+        },
+    )
+    .unwrap();
+    assert_eq!(f.doc.glyph_sets[0].pages[0].id, f.bold);
+    assert_eq!(f.doc.glyph_sets[0].pages[1].id, f.regular);
+    undo(&mut f.doc, &change_set).unwrap();
+    assert_eq!(f.doc, before);
+}
+
+#[test]
+fn reorder_rejects_non_permutation() {
+    let mut f = fixture();
+    let err = reorder_pages(
+        &mut f.doc,
+        &ReorderPages {
+            glyph_set_id: f.glyph_set,
+            order: vec![f.regular], // missing bold
+        },
+    )
+    .unwrap_err();
+    assert!(matches!(
+        err,
+        FontSpaceError::InvalidPageOrder { expected: 2, .. }
+    ));
+}
+
+#[test]
+fn reorder_to_same_order_is_a_noop() {
+    let mut f = fixture();
+    let change_set = reorder_pages(
+        &mut f.doc,
+        &ReorderPages {
+            glyph_set_id: f.glyph_set,
+            order: vec![f.regular, f.bold],
+        },
+    )
+    .unwrap();
+    assert!(change_set.is_empty());
+}
+
+// --- Guide operations ---
+
+#[test]
+fn add_guide_and_undo() {
+    let mut f = fixture();
+    let before = f.doc.clone();
+    let change_set = add_guide(
+        &mut f.doc,
+        &AddGuide {
+            glyph_set_id: f.glyph_set,
+            page_id: f.regular,
+            name: "Baseline".into(),
+            axis: GuideAxis::Horizontal,
+            position: 6,
+            visible: true,
+            locked: false,
+        },
+        &mut f.ids,
+    )
+    .unwrap();
+    assert_eq!(f.doc.glyph_sets[0].pages[0].guides.len(), 1);
+    undo(&mut f.doc, &change_set).unwrap();
+    assert_eq!(f.doc, before, "undo of add_guide removes the guide");
+}
+
+#[test]
+fn move_guide_and_undo() {
+    let mut f = fixture();
+    add_guide(
+        &mut f.doc,
+        &AddGuide {
+            glyph_set_id: f.glyph_set,
+            page_id: f.regular,
+            name: "Baseline".into(),
+            axis: GuideAxis::Horizontal,
+            position: 6,
+            visible: true,
+            locked: false,
+        },
+        &mut f.ids,
+    )
+    .unwrap();
+    let guide_id = f.doc.glyph_sets[0].pages[0].guides[0].id;
+    let after_add = f.doc.clone();
+
+    let change_set = move_guide(
+        &mut f.doc,
+        &MoveGuide {
+            glyph_set_id: f.glyph_set,
+            page_id: f.regular,
+            guide_id,
+            position: 10,
+        },
+    )
+    .unwrap();
+    assert_eq!(f.doc.glyph_sets[0].pages[0].guides[0].position, 10);
+    undo(&mut f.doc, &change_set).unwrap();
+    assert_eq!(f.doc, after_add, "undo restores the guide position");
+}
+
+#[test]
+fn move_guide_to_same_position_is_a_noop() {
+    let mut f = fixture();
+    add_guide(
+        &mut f.doc,
+        &AddGuide {
+            glyph_set_id: f.glyph_set,
+            page_id: f.regular,
+            name: "Baseline".into(),
+            axis: GuideAxis::Horizontal,
+            position: 6,
+            visible: true,
+            locked: false,
+        },
+        &mut f.ids,
+    )
+    .unwrap();
+    let guide_id = f.doc.glyph_sets[0].pages[0].guides[0].id;
+    let change_set = move_guide(
+        &mut f.doc,
+        &MoveGuide {
+            glyph_set_id: f.glyph_set,
+            page_id: f.regular,
+            guide_id,
+            position: 6,
+        },
+    )
+    .unwrap();
+    assert!(change_set.is_empty());
+}
+
+#[test]
+fn move_missing_guide_errors() {
+    let mut f = fixture();
+    let mut ids = SequentialIdGen::new();
+    let bogus = fontspace_model::GuideId::new(&mut ids);
+    let err = move_guide(
+        &mut f.doc,
+        &MoveGuide {
+            glyph_set_id: f.glyph_set,
+            page_id: f.regular,
+            guide_id: bogus,
+            position: 3,
+        },
+    )
+    .unwrap_err();
+    assert!(matches!(err, FontSpaceError::GuideNotFound { .. }));
+}
+
+#[test]
+fn copy_guide_to_pages_mints_fresh_ids_and_skips_source() {
+    let mut f = fixture();
+    add_guide(
+        &mut f.doc,
+        &AddGuide {
+            glyph_set_id: f.glyph_set,
+            page_id: f.regular,
+            name: "Baseline".into(),
+            axis: GuideAxis::Horizontal,
+            position: 6,
+            visible: true,
+            locked: false,
+        },
+        &mut f.ids,
+    )
+    .unwrap();
+    let source_guide_id = f.doc.glyph_sets[0].pages[0].guides[0].id;
+    let before = f.doc.clone();
+
+    let change_set = copy_guide_to_pages(
+        &mut f.doc,
+        &CopyGuideToPages {
+            glyph_set_id: f.glyph_set,
+            source_page_id: f.regular,
+            guide_id: source_guide_id,
+            target_pages: PageSelector::All, // includes source; source is skipped
+        },
+        &mut f.ids,
+    )
+    .unwrap();
+    // Bold page (index 1) got a copy with a distinct id; source unchanged (1 guide).
+    assert_eq!(f.doc.glyph_sets[0].pages[0].guides.len(), 1);
+    assert_eq!(f.doc.glyph_sets[0].pages[1].guides.len(), 1);
+    let copied = &f.doc.glyph_sets[0].pages[1].guides[0];
+    assert_ne!(copied.id, source_guide_id, "copy mints a fresh GuideId");
+    assert_eq!(copied.position, 6);
+    undo(&mut f.doc, &change_set).unwrap();
+    assert_eq!(f.doc, before, "undo removes every copied guide");
 }
 
 // --- Property test: every operation's change set inverts exactly (spec/07 §7.7) ---

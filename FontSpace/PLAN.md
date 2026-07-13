@@ -13,11 +13,11 @@ This plan turns [SPEC.md](SPEC.md) into an ordered sequence of shippable milesto
 
 Goal: an empty but disciplined Cargo workspace.
 
-- [ ] `FontSpace/Cargo.toml` virtual workspace; empty `fontspace-model` and `fontspace-cli` crates; `#![forbid(unsafe_code)]` in each.
-- [ ] `rust-toolchain.toml` (pin stable), `rustfmt.toml`, `.gitignore` already covers `target/`.
+- [x] `FontSpace/Cargo.toml` virtual workspace; empty `fontspace-model` and `fontspace-cli` crates; `#![forbid(unsafe_code)]` in each. — [#2](https://github.com/enthal/glyph-80/pull/2)
+- [x] `rust-toolchain.toml` (pin stable), `rustfmt.toml`, `.gitignore` already covers `target/`. — [#2](https://github.com/enthal/glyph-80/pull/2)
 - [x] **Pre-commit hook** ([spec/19](spec/19-ci-and-hooks.md) §19.2): git hooks are repo-global, so a **repo-root** dispatcher (`.cargo-husky/hooks/pre-commit`) is installed into `.git/hooks/` by **`cargo-husky`** (a `user-hooks` dev-dependency of `fontspace-cli`) on the first `cargo test` — a repo-level, one-time setup since FontSpace is the first sub-project. FontSpace contributes `FontSpace/scripts/precommit.sh` running `fmt` + `clippy` + the markdown no-hardwrap lint (not the test suite), invoked when `FontSpace/**` is staged. A one-line note in the repo-root [../CLAUDE.md](../CLAUDE.md) records that the hook mechanism lives at the root.
-- [ ] **CI workflow** ([spec/19](spec/19-ci-and-hooks.md) §19.3): `.github/workflows/fontspace-ci.yml`, path-filtered to `FontSpace/**`, with jobs `fmt` (ubuntu), `clippy` + `test` on a **macOS + Linux matrix** (so the `cfg`-gated platform code in chapter 18 is actually checked), and `markdown`. Cache cargo; pin toolchain.
-- [ ] **Branch protection** ([spec/19](spec/19-ci-and-hooks.md) §19.4): once CI runs, add the six required contexts (`fontspace / fmt`, `fontspace / clippy (…)` ×2, `fontspace / test (…)` ×2, `fontspace / markdown`) to the `main` rule — this closes the item deferred at repo setup. Note the monorepo path-filter gotcha (§19.5) for when a second sub-project lands.
+- [x] **CI workflow** ([spec/19](spec/19-ci-and-hooks.md) §19.3): `.github/workflows/fontspace-ci.yml`, path-filtered to `FontSpace/**`, with jobs `fmt` (ubuntu), `clippy` + `test` on a **macOS + Linux matrix** (so the `cfg`-gated platform code in chapter 18 is actually checked), and `markdown`. Cache cargo; pin toolchain. — [#2](https://github.com/enthal/glyph-80/pull/2)
+- [ ] **Branch protection** ([spec/19](spec/19-ci-and-hooks.md) §19.4): once CI runs, add the six required contexts (`fontspace / fmt`, `fontspace / clippy (…)` ×2, `fontspace / test (…)` ×2, `fontspace / markdown`) to the `main` rule — this closes the item deferred at repo setup. Note the monorepo path-filter gotcha (§19.5) for when a second sub-project lands. **Deferred:** requires GitHub admin (a manual, human step); CI has run green on every PR since [#2](https://github.com/enthal/glyph-80/pull/2).
 
 Definition of done: `cargo build/test/clippy/fmt` succeed on an empty tree; CI is green on the matrix; the hook installs and blocks a mis-formatted commit.
 
@@ -29,12 +29,12 @@ Crates: `fontspace-model`, `fontspace-ops`, `fontspace-json`, `fontspace-render`
 
 Steps:
 
-- [ ] **Value types + IDs + injection** — `GlyphSize`, typed IDs, `IdGen`/`RandomIdGen`/`SequentialIdGen`, `Rgba`, `Limits` ([spec/03](spec/03-domain-model.md), [spec/16](spec/16-performance-safety-limits.md)).
-- [ ] **`Bitmap`** — packing, padding-bit invariant, get/set/toggle/clear/is_blank/count_on, pure `shifted`/`flipped`/`inverted` ([spec/05](spec/05-glyphs-and-bitmaps.md)). *Strict tests first, incl. odd widths.*
-- [ ] **Character sets** — `CharacterEntry { code, label }`, `code`-uniqueness, ordering, ASCII preset op ([spec/04](spec/04-character-sets.md)).
-- [ ] **Glyph sets, pages, glyphs, guides** — sparse pages keyed by `code`, `glyphs_by_code`, referential-integrity/uniqueness validation ([spec/03](spec/03-domain-model.md), [spec/04](spec/04-character-sets.md)).
-- [ ] **JSON layer** — storage structs, visual-row parse/format, canonical writer (deterministic), blank pruning, `format_version` dispatch, migration scaffold. *Round-trip + `save(load(save))==save` + golden tests* ([spec/06](spec/06-json-persistence.md), [spec/15](spec/15-testing.md)).
-- [ ] **Operations + selectors + change sets** — `SetPixels`, `ShiftGlyphs`, `ClearGlyphs`, `InvertGlyphs`, page ops, guide ops, and the character-set edit ops incl. **remove-cascade** and **recode-warn**; atomic apply; invertible `ChangeSet` ([spec/07](spec/07-operations.md)). *Strict tests for cascade + inversion.*
+- [x] **Value types + IDs + injection** — `GlyphSize`, typed IDs, `IdGen`/`RandomIdGen`/`SequentialIdGen`, `Rgba`, `Limits` ([spec/03](spec/03-domain-model.md), [spec/16](spec/16-performance-safety-limits.md)). — [#3](https://github.com/enthal/glyph-80/pull/3)
+- [x] **`Bitmap`** — packing, padding-bit invariant, get/set/toggle/clear/is_blank/count_on, pure `shifted`/`flipped`/`inverted` ([spec/05](spec/05-glyphs-and-bitmaps.md)). *Strict tests first, incl. odd widths.* — [#3](https://github.com/enthal/glyph-80/pull/3)
+- [ ] **Character sets** — `CharacterEntry { code, label }`, `code`-uniqueness, ordering, ASCII preset op ([spec/04](spec/04-character-sets.md)). *Data model + `code`-uniqueness + ordering done in [#5](https://github.com/enthal/glyph-80/pull/5); the ASCII preset op (needs `IdGen`) is still pending.*
+- [x] **Glyph sets, pages, glyphs, guides** — sparse pages keyed by `code`, `glyph_of_code`, referential-integrity/uniqueness validation ([spec/03](spec/03-domain-model.md), [spec/04](spec/04-character-sets.md)). — [#5](https://github.com/enthal/glyph-80/pull/5)
+- [x] **JSON layer** — storage structs, visual-row parse/format, canonical writer (deterministic), blank pruning, `format_version` dispatch, migration scaffold. *Round-trip + `save(load(save))==save` + golden tests* ([spec/06](spec/06-json-persistence.md), [spec/15](spec/15-testing.md)). — [#7](https://github.com/enthal/glyph-80/pull/7)
+- [ ] **Operations + selectors + change sets** — `SetPixels`, `ShiftGlyphs`, `ClearGlyphs`, `InvertGlyphs`, page ops, guide ops, and the character-set edit ops incl. **remove-cascade** and **recode-warn**; atomic apply; invertible `ChangeSet` ([spec/07](spec/07-operations.md)). *Strict tests for cascade + inversion.* *Split into sub-slices: glyph ops done in [#8](https://github.com/enthal/glyph-80/pull/8); page + guide ops in progress; character-set edit ops (cascade/recode) still pending.*
 - [ ] **Text-grid render** ([spec/09](spec/09-rendering.md)).
 - [ ] **CLI** — `new`, `info`, `set-pixels`, `shift`, `render-text`, `extract`; atomic writes; `--dry-run`; JSON errors ([spec/13](spec/13-cli-and-mcp.md)).
 

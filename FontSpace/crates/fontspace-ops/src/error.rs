@@ -1,7 +1,7 @@
 //! Structured operation errors (spec/07, spec/14 §14.2). Every variant names the
 //! object context it can — glyph set, character set, page, code, coordinates.
 
-use fontspace_model::{CharacterSetId, GlyphSetId, PageId};
+use fontspace_model::{CharacterSetId, GlyphSetId, GuideId, PageId};
 
 /// Why an operation could not be resolved or applied. Operations validate fully
 /// before mutating, so returning one of these means the document is unchanged
@@ -62,5 +62,20 @@ pub enum FontSpaceError {
         y: u16,
         width: u16,
         height: u16,
+    },
+
+    #[error(
+        "glyph set {glyph_set:?}: reorder is not a permutation of the current {expected} page id(s)"
+    )]
+    InvalidPageOrder {
+        glyph_set: GlyphSetId,
+        expected: usize,
+    },
+
+    #[error("glyph set {glyph_set:?} / page {page:?}: guide {guide:?} not found")]
+    GuideNotFound {
+        glyph_set: GlyphSetId,
+        page: PageId,
+        guide: GuideId,
     },
 }
