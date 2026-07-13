@@ -37,19 +37,19 @@ pub(crate) fn resolve_pages(
     glyph_set: &GlyphSet,
     selector: &PageSelector,
 ) -> Result<Vec<PageId>, FontSpaceError> {
-    match selector {
-        PageSelector::All => Ok(glyph_set.pages.iter().map(|page| page.id).collect()),
+    let resolved: Vec<PageId> = match selector {
+        PageSelector::All => glyph_set.pages.iter().map(|page| page.id).collect(),
         PageSelector::Id(id) => {
             resolve_page_id(glyph_set, *id)?;
-            Ok(vec![*id])
+            vec![*id]
         }
         PageSelector::Ids(ids) => {
             for &id in ids {
                 resolve_page_id(glyph_set, id)?;
             }
-            Ok(ids.clone())
+            ids.clone()
         }
-        PageSelector::Index(index) => Ok(vec![page_at_index(glyph_set, *index)?]),
+        PageSelector::Index(index) => vec![page_at_index(glyph_set, *index)?],
         PageSelector::RangeInclusive { start, end } => {
             if start > end {
                 return Err(FontSpaceError::InvalidRange {
@@ -59,14 +59,25 @@ pub(crate) fn resolve_pages(
             }
             (*start..=*end)
                 .map(|index| page_at_index(glyph_set, index))
-                .collect()
+                .collect::<Result<Vec<_>, _>>()?
         }
-        PageSelector::Name(name) => Ok(vec![resolve_page_name(glyph_set, name)?]),
+        PageSelector::Name(name) => vec![resolve_page_name(glyph_set, name)?],
         PageSelector::Names(names) => names
             .iter()
             .map(|name| resolve_page_name(glyph_set, name))
-            .collect(),
-    }
+            .collect::<Result<Vec<_>, _>>()?,
+    };
+    Ok(dedup_preserving_order(resolved))
+}
+
+/// Removes duplicates while keeping first-occurrence order, so repeated ids/codes in
+/// `Ids`/`Names`/`Codes`/`Ordinals` selectors do not produce redundant change entries.
+fn dedup_preserving_order<T: Eq + std::hash::Hash + Copy>(items: Vec<T>) -> Vec<T> {
+    let mut seen = std::collections::HashSet::new();
+    items
+        .into_iter()
+        .filter(|item| seen.insert(*item))
+        .collect()
 }
 
 fn resolve_page_id(glyph_set: &GlyphSet, id: PageId) -> Result<(), FontSpaceError> {
@@ -118,21 +129,21 @@ pub(crate) fn resolve_glyph_codes(
     character_set: &CharacterSet,
     selector: &GlyphSelector,
 ) -> Result<Vec<u32>, FontSpaceError> {
-    match selector {
-        GlyphSelector::All => Ok(character_set
+    let resolved: Vec<u32> = match selector {
+        GlyphSelector::All => character_set
             .entries
             .iter()
             .map(|entry| entry.code)
-            .collect()),
+            .collect(),
         GlyphSelector::Code(code) => {
             require_code(character_set, *code)?;
-            Ok(vec![*code])
+            vec![*code]
         }
         GlyphSelector::Codes(codes) => {
             for &code in codes {
                 require_code(character_set, code)?;
             }
-            Ok(codes.clone())
+            codes.clone()
         }
         GlyphSelector::CodeRangeInclusive { start, end } => {
             if start > end {
@@ -142,18 +153,18 @@ pub(crate) fn resolve_glyph_codes(
                 });
             }
             // Entry codes falling within the numeric range, in entry order.
-            Ok(character_set
+            character_set
                 .entries
                 .iter()
                 .map(|entry| entry.code)
                 .filter(|code| (*start..=*end).contains(code))
-                .collect())
+                .collect()
         }
-        GlyphSelector::Ordinal(ordinal) => Ok(vec![code_at_ordinal(character_set, *ordinal)?]),
+        GlyphSelector::Ordinal(ordinal) => vec![code_at_ordinal(character_set, *ordinal)?],
         GlyphSelector::Ordinals(ordinals) => ordinals
             .iter()
             .map(|&o| code_at_ordinal(character_set, o))
-            .collect(),
+            .collect::<Result<Vec<_>, _>>()?,
         GlyphSelector::OrdinalRangeInclusive { start, end } => {
             if start > end {
                 return Err(FontSpaceError::InvalidRange {
@@ -163,9 +174,10 @@ pub(crate) fn resolve_glyph_codes(
             }
             (*start..=*end)
                 .map(|o| code_at_ordinal(character_set, o))
-                .collect()
+                .collect::<Result<Vec<_>, _>>()?
         }
-    }
+    };
+    Ok(dedup_preserving_order(resolved))
 }
 
 fn require_code(character_set: &CharacterSet, code: u32) -> Result<(), FontSpaceError> {

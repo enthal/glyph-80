@@ -151,9 +151,10 @@ pub fn invert_glyphs(doc: &mut FontSpace, req: &InvertGlyphs) -> Result<ChangeSe
 }
 
 /// The shared engine for the batch glyph transforms: resolve pages and codes, then
-/// for each existing glyph among them apply `transform` and record a change when the
-/// bitmap actually changed. Absent codes are skipped (transforming a blank is a
-/// no-op for these operations). Atomic: nothing mutates until every target resolves.
+/// for each **stored** glyph among them apply `transform` and record a change when
+/// the bitmap actually changed. A selected code with no stored glyph is left
+/// untouched, not materialized — so `InvertGlyphs` does not fill absent codes with
+/// all-on glyphs (spec/07 §7.5). Atomic: nothing mutates until every target resolves.
 fn batch_transform(
     doc: &mut FontSpace,
     glyph_set_id: GlyphSetId,
@@ -181,7 +182,7 @@ fn batch_transform(
             };
             for &code in &codes {
                 let Some(glyph) = page.glyph_of_code(code) else {
-                    continue; // absent = blank; nothing to transform
+                    continue; // no stored glyph: left untouched (spec/07 §7.5)
                 };
                 let before = glyph.bitmap.clone();
                 let after = transform(&before);

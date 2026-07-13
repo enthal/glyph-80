@@ -338,6 +338,48 @@ fn selector_errors_are_precise() {
 }
 
 #[test]
+fn batch_op_bad_selector_leaves_document_unchanged() {
+    let mut f = fixture();
+    let before = f.doc.clone();
+    let err = clear_glyphs(
+        &mut f.doc,
+        &ClearGlyphs {
+            glyph_set_id: f.glyph_set,
+            pages: PageSelector::Index(99), // resolves to an error before any mutation
+            glyphs: GlyphSelector::All,
+        },
+    )
+    .unwrap_err();
+    assert!(matches!(
+        err,
+        FontSpaceError::PageIndexOutOfRange { index: 99, .. }
+    ));
+    assert_eq!(
+        f.doc, before,
+        "a failed batch op leaves the document unchanged"
+    );
+}
+
+#[test]
+fn duplicate_codes_selector_is_deduped() {
+    let mut f = fixture();
+    let change_set = clear_glyphs(
+        &mut f.doc,
+        &ClearGlyphs {
+            glyph_set_id: f.glyph_set,
+            pages: PageSelector::Name("Regular".into()),
+            glyphs: GlyphSelector::Codes(vec![0x41, 0x41, 0x41]),
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        change_set.object_changes.len(),
+        1,
+        "duplicate codes collapse to one change"
+    );
+}
+
+#[test]
 fn ambiguous_page_name_is_rejected() {
     let mut f = fixture();
     // Give the Bold page the same name as Regular.

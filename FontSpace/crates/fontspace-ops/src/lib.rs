@@ -27,6 +27,11 @@ pub use selector::{GlyphSelector, PageSelector};
 /// Applies a change set forward (also the redo primitive). Sets each changed glyph's
 /// bitmap to its `after`, materializing the glyph if absent. Fails only if the change
 /// set references a glyph set or page not present in `doc`.
+///
+/// This assumes `change_set` matches the current document — as it does when it came
+/// from an operation on this document, or its inverse. It applies changes in order
+/// and is **not** self-atomic on a mismatched set; the operation functions guarantee
+/// atomicity by resolving and validating every target before calling this.
 pub fn apply_change_set(doc: &mut FontSpace, change_set: &ChangeSet) -> Result<(), FontSpaceError> {
     for change in &change_set.object_changes {
         match change {
