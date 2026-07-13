@@ -1,0 +1,16 @@
+[package]
+name = "fontspace-cli"
+description = "Command-line adapter over FontSpace's typed operations."
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+
+[dev-dependencies]
+# Auto-installs the repo-global git pre-commit hook from `.cargo-husky/hooks/`
+# on the first `cargo test`. `user-hooks` uses our committed scripts verbatim
+# rather than cargo-husky's generated cargo commands. See spec/19-ci-and-hooks.md.
+cargo-husky = { version = "1", default-features = false, features = ["user-hooks"] }

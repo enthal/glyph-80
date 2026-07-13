@@ -42,6 +42,7 @@ When a sub-project directory has its own `CLAUDE.md`, that file is canonical for
 
 - Use relative paths in shell commands, not absolute paths. Avoid `git -C <abs-path>`; it breaks project-level Claude permissions.
 - Don't skip hooks (`--no-verify`) or bypass signing unless the user explicitly asks. If a hook fails, fix the underlying issue.
+- **The git pre-commit hook mechanism is repo-level and lives at the root:** a dispatcher at `.cargo-husky/hooks/pre-commit` that each sub-project extends. It is installed into `.git/hooks/` by `cargo-husky` on the first `cargo test` in a Rust sub-project (currently FontSpace). See [FontSpace/spec/19-ci-and-hooks.md](FontSpace/spec/19-ci-and-hooks.md) §19.2.
 - **Only kill processes you started.** Capture the PID of anything you launch and kill *only* that PID. Never `pkill`/`kill` by name or pattern.
 - **Worktrees live under `./.claude/worktrees/<slug>`**, not in sibling directories.
 
