@@ -121,9 +121,32 @@ impl std::fmt::Display for ValidationWarning {
     }
 }
 
+/// Records a stable-id uniqueness check: inserts `id` into `seen`, and if it was
+/// already present pushes `mk_error(id)`. Centralizes the five per-object-kind
+/// duplicate-id checks so they cannot drift apart.
+fn check_unique<Id, F>(
+    seen: &mut HashSet<Id>,
+    id: Id,
+    errors: &mut Vec<ValidationError>,
+    mk_error: F,
+) where
+    Id: Eq + std::hash::Hash + Copy,
+    F: FnOnce(Id) -> ValidationError,
+{
+    if !seen.insert(id) {
+        errors.push(mk_error(id));
+    }
+}
+
 impl FontSpace {
     /// Validate the whole document against the structural invariants and `limits`.
     /// Never mutates; collects every problem rather than failing on the first.
+    ///
+    /// Two §14.1 clauses are structurally vacuous or deferred here: a `Guide` has no
+    /// invalid state beyond id uniqueness (its `axis` is an enum and `position` is any
+    /// `i32`), and export **components** don't exist yet — `ExportConfig` is a
+    /// provisional stub, so only its id uniqueness is checked. Both land in full with
+    /// the export crate at Milestone 5 (spec/10).
     pub fn validate(&self, limits: &Limits) -> ValidationReport {
         let mut report = ValidationReport::default();
 
@@ -140,14 +163,15 @@ impl FontSpace {
         // Build each set's code membership up front for the referential-integrity
         // check below.
         let mut seen_character_set_ids = HashSet::new();
-        let mut entry_codes_by_character_set_id: HashMap<CharacterSetId, HashSet<u32>> =
+        let mut code_sets_by_character_set_id: HashMap<CharacterSetId, HashSet<u32>> =
             HashMap::new();
         for character_set in &self.character_sets {
-            if !seen_character_set_ids.insert(character_set.id) {
-                report
-                    .errors
-                    .push(ValidationError::DuplicateCharacterSetId(character_set.id));
-            }
+            check_unique(
+                &mut seen_character_set_ids,
+                character_set.id,
+                &mut report.errors,
+                ValidationError::DuplicateCharacterSetId,
+            );
             if character_set.entries.len() as u64 > limits.max_character_slots_per_set as u64 {
                 report.errors.push(ValidationError::TooManyEntries {
                     character_set: character_set.id,
@@ -164,7 +188,13 @@ impl FontSpace {
                     });
                 }
             }
-            entry_codes_by_character_set_id.insert(character_set.id, codes);
+            // Union rather than overwrite: if two sets share an id (already a hard
+            // error above), a glyph matching either set's codes must not draw a
+            // spurious dangling warning.
+            code_sets_by_character_set_id
+                .entry(character_set.id)
+                .or_default()
+                .extend(codes);
         }
 
         // Glyph sets, pages, glyphs: ids, references, geometry, uniqueness, dangling.
@@ -174,18 +204,19 @@ impl FontSpace {
         let mut total_glyph_pixels: u64 = 0;
 
         for glyph_set in &self.glyph_sets {
-            if !seen_glyph_set_ids.insert(glyph_set.id) {
-                report
-                    .errors
-                    .push(ValidationError::DuplicateGlyphSetId(glyph_set.id));
-            }
+            check_unique(
+                &mut seen_glyph_set_ids,
+                glyph_set.id,
+                &mut report.errors,
+                ValidationError::DuplicateGlyphSetId,
+            );
             if let Err(source) = glyph_set.glyph_size.validate(limits) {
                 report.errors.push(ValidationError::GlyphSizeInvalid {
                     glyph_set: glyph_set.id,
                     source,
                 });
             }
-            let known_codes = entry_codes_by_character_set_id.get(&glyph_set.character_set_id);
+            let known_codes = code_sets_by_character_set_id.get(&glyph_set.character_set_id);
             if known_codes.is_none() {
                 report.errors.push(ValidationError::UnknownCharacterSet {
                     glyph_set: glyph_set.id,
@@ -201,17 +232,19 @@ impl FontSpace {
             }
 
             for page in &glyph_set.pages {
-                if !seen_page_ids.insert(page.id) {
-                    report
-                        .errors
-                        .push(ValidationError::DuplicatePageId(page.id));
-                }
+                check_unique(
+                    &mut seen_page_ids,
+                    page.id,
+                    &mut report.errors,
+                    ValidationError::DuplicatePageId,
+                );
                 for guide in &page.guides {
-                    if !seen_guide_ids.insert(guide.id) {
-                        report
-                            .errors
-                            .push(ValidationError::DuplicateGuideId(guide.id));
-                    }
+                    check_unique(
+                        &mut seen_guide_ids,
+                        guide.id,
+                        &mut report.errors,
+                        ValidationError::DuplicateGuideId,
+                    );
                 }
 
                 let mut seen_glyph_codes = HashSet::new();
@@ -254,11 +287,12 @@ impl FontSpace {
         // Export configs: id uniqueness (provisional type; spec/10 lands at M5).
         let mut seen_export_config_ids = HashSet::new();
         for export_config in &self.export_configs {
-            if !seen_export_config_ids.insert(export_config.id) {
-                report
-                    .errors
-                    .push(ValidationError::DuplicateExportConfigId(export_config.id));
-            }
+            check_unique(
+                &mut seen_export_config_ids,
+                export_config.id,
+                &mut report.errors,
+                ValidationError::DuplicateExportConfigId,
+            );
         }
 
         if total_glyph_pixels > limits.max_total_glyph_pixels_per_document {
