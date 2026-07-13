@@ -14,6 +14,7 @@
 pub mod app;
 pub mod editor;
 pub mod layout;
+pub mod page_overview;
 pub mod state;
 
 pub use app::FontSpaceApp;

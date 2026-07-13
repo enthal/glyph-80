@@ -9,6 +9,7 @@ use egui_tiles::{Tile, Tree};
 
 use crate::editor::show_glyph_editor;
 use crate::layout::{Pane, default_tree, panes_in};
+use crate::page_overview::show_page_overview;
 use crate::state::AppState;
 
 /// The FontSpace desktop application.
@@ -158,6 +159,7 @@ impl egui_tiles::Behavior<Pane> for PaneBehavior<'_> {
     ) -> egui_tiles::UiResponse {
         match pane {
             Pane::GlyphEditor => show_glyph_editor(ui, self.state),
+            Pane::PageOverview => show_page_overview(ui, self.state),
             other => placeholder(ui, *other),
         }
         egui_tiles::UiResponse::None

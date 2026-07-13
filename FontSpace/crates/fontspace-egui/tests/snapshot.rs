@@ -13,6 +13,7 @@
 
 use egui_kittest::{Harness, SnapshotOptions};
 use fontspace_egui::editor::show_glyph_editor;
+use fontspace_egui::page_overview::show_page_overview;
 use fontspace_egui::{AppState, FontSpaceApp};
 use fontspace_model::SequentialIdGen;
 
@@ -49,6 +50,17 @@ fn glyph_editor() {
         .build_ui(move |ui| show_glyph_editor(ui, &mut state));
     harness.run();
     harness.snapshot_options("glyph_editor", &options());
+}
+
+#[test]
+fn page_overview() {
+    let mut state = state();
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(400.0, 300.0))
+        .wgpu()
+        .build_ui(move |ui| show_page_overview(ui, &mut state));
+    harness.run();
+    harness.snapshot_options("page_overview", &options());
 }
 
 #[test]
