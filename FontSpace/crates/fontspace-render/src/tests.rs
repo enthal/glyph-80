@@ -362,3 +362,30 @@ fn text_string_empty_line_contributes_nothing() {
         "#.#\n.#.\n#.#\n#.#\n.#.\n#.#"
     );
 }
+
+#[test]
+fn text_string_stacks_pages_with_page_separator() {
+    let (mut doc, gs) = fixture();
+    // Add a second, empty page: 0x41 renders blank there.
+    let mut ids = SequentialIdGen::new();
+    doc.glyph_sets[0]
+        .pages
+        .push(GlyphPage::new(&mut ids, "Blank", ""));
+    let mut req = text(gs, vec![vec![0x41]]);
+    req.page_separator = "--".into(); // single-line separator for a clean assertion
+    // Page "Regular" (X pattern), separator, page "Blank" (3×3 blank).
+    assert_eq!(
+        render_text_string(&doc, &req).unwrap(),
+        "#.#\n.#.\n#.#\n--\n...\n...\n..."
+    );
+}
+
+#[test]
+fn text_string_with_no_character_set_renders_nothing() {
+    let (mut doc, gs) = fixture();
+    // Drop the character set the glyph set references (a dangling reference): with
+    // no entries, every code is un-gated and ignored, so the render is empty.
+    doc.character_sets.clear();
+    let req = text(gs, vec![vec![0x41, 0x42]]);
+    assert_eq!(render_text_string(&doc, &req).unwrap(), "");
+}

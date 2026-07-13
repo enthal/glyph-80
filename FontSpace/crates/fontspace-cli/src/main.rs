@@ -89,8 +89,8 @@ enum Command {
     /// `--glyphs` (a code selector; defaults to *all* glyphs), `--text` (an input
     /// string rendered as one line), or `--text-nl` (like `--text`, but a newline
     /// starts a new line). At most one may be given. For `--text`/`--text-nl`,
-    /// input characters map to 8-bit codes and characters with no character-set
-    /// entry are ignored.
+    /// each input character maps to a `code` by its Unicode scalar (the byte value
+    /// for Latin-1 input) and characters with no character-set entry are ignored.
     RenderText {
         path: PathBuf,
         #[arg(long)]

@@ -60,7 +60,7 @@ pub struct TextStringRequest {
 }
 ```
 
-It differs from §9.2 in two ways. First, `rows` is an **ordered sequence with repeats** — the same `code` may appear many times and renders each time — where a `GlyphSelector` resolves to a deduplicated set. Each inner vector is one output line; lines stack directly (a source newline begins a new line), and pages stack vertically joined by `page_separator`. Second, membership is **entry-gated**: a `code` renders iff the glyph set's character set has an entry for it; a code with no entry is **ignored** (it is not a character of this font). A rendered code whose glyph is absent on the page draws blank (the §9.2 absent-as-blank rule), so a defined-but-empty character such as a space still occupies its cell. `on`/`off`/`scale_*`/`glyph_separator` behave as in §9.2.
+It differs from §9.2 in two ways. First, `rows` is an **ordered sequence with repeats** — the same `code` may appear many times and renders each time — where a `GlyphSelector` resolves to a deduplicated set. Each inner vector is one output line; lines stack directly (a source newline begins a new line), and pages stack vertically joined by `page_separator`. An empty or all-ignored line contributes no rows (there is no blank-gap line). Second, membership is **entry-gated**: a `code` renders iff the glyph set's character set has an entry for it; a code with no entry is **ignored** (it is not a character of this font). A rendered code whose glyph is absent on the page draws blank (the §9.2 absent-as-blank rule), so a defined-but-empty character such as a space still occupies its cell. `on`/`off`/`scale_*`/`glyph_separator` behave as in §9.2.
 
 ## 9.3 Image rendering
 

@@ -18,7 +18,7 @@
 //! `PagesHorizontal`, which places pages side by side joined by `page_separator`.
 //! Finally all rows are joined by `row_separator` (typically `"\n"`).
 
-use fontspace_model::{Bitmap, FontSpace, GlyphSetId};
+use fontspace_model::{Bitmap, FontSpace, GlyphPage, GlyphSetId, GlyphSize};
 use fontspace_ops::{
     FontSpaceError, GlyphSelector, PageSelector, resolve_glyph_codes_in, resolve_pages_in,
 };
@@ -93,11 +93,15 @@ pub fn render_text_grid(doc: &FontSpace, req: &TextGridRequest) -> Result<String
         let glyph_blocks: Vec<Block> = codes
             .iter()
             .map(|&code| {
-                let bitmap = page
-                    .glyph_of_code(code)
-                    .map(|glyph| glyph.bitmap.clone())
-                    .unwrap_or_else(|| Bitmap::new_blank(size));
-                render_glyph(&bitmap, &req.on, &req.off, req.scale_x, req.scale_y)
+                code_block(
+                    page,
+                    size,
+                    code,
+                    &req.on,
+                    &req.off,
+                    req.scale_x,
+                    req.scale_y,
+                )
             })
             .collect();
         page_blocks.push(arrange_glyphs(glyph_blocks, req));
@@ -142,11 +146,15 @@ pub fn render_text_string(
                 .iter()
                 .filter(|&&code| character_set.is_some_and(|cs| cs.contains_code(code)))
                 .map(|&code| {
-                    let bitmap = page
-                        .glyph_of_code(code)
-                        .map(|glyph| glyph.bitmap.clone())
-                        .unwrap_or_else(|| Bitmap::new_blank(size));
-                    render_glyph(&bitmap, &req.on, &req.off, req.scale_x, req.scale_y)
+                    code_block(
+                        page,
+                        size,
+                        code,
+                        &req.on,
+                        &req.off,
+                        req.scale_x,
+                        req.scale_y,
+                    )
                 })
                 .collect();
             page_block.extend(hstack(&glyph_blocks, &req.glyph_separator));
@@ -155,6 +163,25 @@ pub fn render_text_string(
     }
 
     Ok(vstack(&page_blocks, &req.page_separator).join(&req.row_separator))
+}
+
+/// Renders the glyph for `code` on `page` to a block, applying the absent-as-blank
+/// rule (spec/05 §5.6, spec/09) in one place: a code with no stored glyph draws a
+/// blank cell of the glyph-set geometry. Shared by both text projections.
+fn code_block(
+    page: &GlyphPage,
+    size: GlyphSize,
+    code: u32,
+    on: &str,
+    off: &str,
+    scale_x: usize,
+    scale_y: usize,
+) -> Block {
+    let bitmap = page
+        .glyph_of_code(code)
+        .map(|glyph| glyph.bitmap.clone())
+        .unwrap_or_else(|| Bitmap::new_blank(size));
+    render_glyph(&bitmap, on, off, scale_x, scale_y)
 }
 
 /// Renders one glyph to a block: each pixel → its `on`/`off` token repeated `scale_x`

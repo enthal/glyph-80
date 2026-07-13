@@ -38,7 +38,7 @@ cargo run -p fontspace-cli -- shift demo.fontspace.json \
   --glyph-set "Terminal 8x16" --pages Regular --glyphs A-Z --dx 1 --dy 0 --dry-run
 ```
 
-`render-text` draws one **subject** — `--glyphs <selector>` (defaults to *all* glyphs when omitted), `--text <string>` (rendered as one line), or `--text-nl <string>` (newlines start a new line); the three are mutually exclusive. For `--text`/`--text-nl`, input characters map to 8-bit codes and characters with no character-set entry are ignored.
+`render-text` draws one **subject** — `--glyphs <selector>` (defaults to *all* glyphs when omitted), `--text <string>` (rendered as one line), or `--text-nl <string>` (newlines start a new line); the three are mutually exclusive. For `--text`/`--text-nl`, each input character maps to a `code` by its Unicode scalar (the byte value for Latin-1 input) and characters with no character-set entry are ignored.
 
 Mutating commands (`set-pixels`, `shift`) write canonical JSON atomically and support `--dry-run`; `--seq` wires the deterministic id generator for reproducible fixtures. (`extract` and machine-readable JSON errors arrive with later milestones.)
 
