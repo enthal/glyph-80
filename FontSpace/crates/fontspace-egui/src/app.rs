@@ -111,8 +111,12 @@ impl FontSpaceApp {
         use egui::{Key, KeyboardShortcut, Modifiers};
         let undo = KeyboardShortcut::new(Modifiers::COMMAND, Key::Z);
         let redo = KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::Z);
-        let (do_undo, do_redo) =
-            ctx.input_mut(|i| (i.consume_shortcut(&undo), i.consume_shortcut(&redo)));
+        // Consume redo FIRST: egui matches modifiers *logically*, so the plain-Cmd+Z
+        // `undo` pattern also matches a Cmd+Shift+Z press. Claiming redo first removes
+        // that event before `undo` can swallow it (redo's Cmd+Shift+Z pattern never
+        // matches a bare Cmd+Z, since a required Shift can't be missing).
+        let (do_redo, do_undo) =
+            ctx.input_mut(|i| (i.consume_shortcut(&redo), i.consume_shortcut(&undo)));
         if do_redo {
             self.state.redo();
         } else if do_undo {
@@ -194,12 +198,43 @@ mod tests {
     #[test]
     fn focus_glyph_editor_is_a_safe_noop_on_the_pane_set() {
         let mut app = FontSpaceApp::default();
-        // Focusing raises the editor's tab; it never adds or drops panes. (In the
-        // default layout the editor is the dominant top pane, not inside a tab
-        // strip, so there is no visible tab to raise yet — this guards the command
-        // against panicking and against mutating the layout.)
-        let before = app.panes();
+        // Focusing raises the editor's tab; it never adds or drops panes. Compare as
+        // sets: `make_active` mutates the tiles container, which reorders its
+        // (hash-ordered) iteration — so the *set* of panes is what's invariant, not
+        // the order.
+        let before: std::collections::HashSet<_> = app.panes().into_iter().collect();
         app.focus_glyph_editor();
-        assert_eq!(app.panes(), before);
+        let after: std::collections::HashSet<_> = app.panes().into_iter().collect();
+        assert_eq!(before, after);
+    }
+
+    #[test]
+    fn cmd_shift_z_redoes_rather_than_undoes() {
+        // Regression: egui matches modifiers logically, so a naive undo-first consume
+        // let Cmd+Shift+Z fall through to undo and made redo unreachable (spec §12.5).
+        let mut app = FontSpaceApp::default();
+        app.state.begin_stroke((0, 0));
+        app.state.commit_stroke();
+        app.state.undo();
+        assert!(app.state.can_redo());
+
+        let ctx = egui::Context::default();
+        let raw = egui::RawInput {
+            events: vec![egui::Event::Key {
+                key: egui::Key::Z,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+            }],
+            ..Default::default()
+        };
+        ctx.begin_pass(raw);
+        app.handle_shortcuts(&ctx);
+        let _ = ctx.end_pass();
+
+        // Redo fired: the redo entry moved back onto the undo stack.
+        assert!(!app.state.can_redo());
+        assert!(app.state.can_undo());
     }
 }
