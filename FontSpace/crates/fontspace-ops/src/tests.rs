@@ -10,10 +10,10 @@ use proptest::prelude::*;
 use crate::{
     AddCharacterEntry, AddGuide, AddPage, ClearGlyphs, CopyGuideToPages, FontSpaceError,
     FontSpaceWarning, GlyphRef, GlyphSelector, InvertGlyphs, MoveGuide, PageSelector, PixelEdit,
-    RecodeCharacterEntry, RemovePages, ReorderCharacterEntries, ReorderPages, SetPixels,
-    ShiftGlyphs, add_character_entry, add_guide, add_page, clear_glyphs, copy_guide_to_pages,
-    invert_glyphs, move_guide, recode_character_entry, remove_pages, reorder_character_entries,
-    reorder_pages, set_pixels, shift_glyphs, undo,
+    RecodeCharacterEntry, RemoveCharacterEntry, RemovePages, ReorderCharacterEntries, ReorderPages,
+    SetPixels, ShiftGlyphs, add_character_entry, add_guide, add_page, clear_glyphs,
+    copy_guide_to_pages, invert_glyphs, move_guide, recode_character_entry, remove_character_entry,
+    remove_pages, reorder_character_entries, reorder_pages, set_pixels, shift_glyphs, undo,
 };
 
 struct Fixture {
@@ -870,13 +870,97 @@ fn recode_finds_orphans_on_every_page() {
         },
     )
     .unwrap();
-    // Single-variant enum, so this destructuring let is irrefutable.
-    let FontSpaceWarning::RecodeOrphanedGlyphs { orphaned, .. } = &change_set.warnings[0];
+    let FontSpaceWarning::RecodeOrphanedGlyphs { orphaned, .. } = &change_set.warnings[0] else {
+        panic!("expected RecodeOrphanedGlyphs");
+    };
     assert_eq!(
         orphaned.len(),
         2,
         "orphans found on both Regular and Bold pages"
     );
+}
+
+#[test]
+fn remove_entry_cascade_deletes_glyphs_across_pages_and_undo_restores() {
+    let mut f = fixture();
+    // Draw a second 0x41 glyph on the Bold page (distinct pattern) so the cascade
+    // must reach both pages and restore each exactly.
+    let size = f.doc.glyph_sets[0].glyph_size;
+    let mut bold_a = Bitmap::new_blank(size);
+    bold_a.set(7, 7, true).unwrap();
+    f.doc.glyph_sets[0].pages[1].glyphs.push(Glyph {
+        code: 0x41,
+        bitmap: bold_a,
+    });
+    let before = f.doc.clone();
+
+    let change_set = remove_character_entry(
+        &mut f.doc,
+        &RemoveCharacterEntry {
+            character_set_id: f.character_set,
+            code: 0x41,
+        },
+    )
+    .unwrap();
+
+    // Entry gone; both 0x41 glyphs cascade-deleted.
+    assert!(!f.doc.character_sets[0].contains_code(0x41));
+    assert!(f.doc.glyph_sets[0].pages[0].glyph_of_code(0x41).is_none());
+    assert!(f.doc.glyph_sets[0].pages[1].glyph_of_code(0x41).is_none());
+    // Warning lists both removed glyphs.
+    let FontSpaceWarning::RemoveCascade {
+        removed,
+        code: 0x41,
+        ..
+    } = &change_set.warnings[0]
+    else {
+        panic!("expected RemoveCascade");
+    };
+    assert_eq!(removed.len(), 2);
+
+    // Undo restores the entry and every glyph, exactly (index-preserving).
+    undo(&mut f.doc, &change_set).unwrap();
+    assert_eq!(
+        f.doc, before,
+        "cascade undo restores entry and glyphs exactly"
+    );
+}
+
+#[test]
+fn remove_entry_with_no_glyphs_has_no_cascade_warning() {
+    let mut f = fixture();
+    // 0x43 has an entry but no drawn glyph anywhere.
+    let change_set = remove_character_entry(
+        &mut f.doc,
+        &RemoveCharacterEntry {
+            character_set_id: f.character_set,
+            code: 0x43,
+        },
+    )
+    .unwrap();
+    assert!(!f.doc.character_sets[0].contains_code(0x43));
+    assert!(
+        change_set.warnings.is_empty(),
+        "no glyphs removed => no cascade warning"
+    );
+    assert_eq!(change_set.object_changes.len(), 1); // just the entry removal
+}
+
+#[test]
+fn remove_missing_entry_errors() {
+    let mut f = fixture();
+    let err = remove_character_entry(
+        &mut f.doc,
+        &RemoveCharacterEntry {
+            character_set_id: f.character_set,
+            code: 0x99,
+        },
+    )
+    .unwrap_err();
+    assert!(matches!(
+        err,
+        FontSpaceError::EntryCodeNotFound { code: 0x99, .. }
+    ));
 }
 
 #[test]

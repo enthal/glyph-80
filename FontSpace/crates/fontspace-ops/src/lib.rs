@@ -5,9 +5,9 @@
 //! all outputs, applies them atomically, and returns one [`ChangeSet`] — the
 //! undo/redo unit. Undo is "apply the inverse"; redo is "apply the change set again".
 //!
-//! Slices 4a–4c implement the glyph, page, guide, and (add/reorder/recode)
-//! character-set edit operations. The one edit that cascades — remove entry — is the
-//! next slice.
+//! This covers the full Milestone-1 operation set: glyph, page, guide, and
+//! character-set edits — including the remove-entry cascade that deletes referencing
+//! glyphs across the document, atomically and invertibly.
 
 mod change_set;
 mod char_set_ops;
@@ -25,12 +25,12 @@ use fontspace_model::{
 };
 
 pub use change_set::{
-    ChangeSet, CharacterSetChange, FontSpaceWarning, GlyphChange, GuideChange, ObjectChange,
-    OrphanedGlyph, PageChange, PagesReorder,
+    CascadedGlyph, ChangeSet, CharacterSetChange, FontSpaceWarning, GlyphChange, GlyphPlacement,
+    GuideChange, ObjectChange, OrphanedGlyph, PageChange, PagesReorder,
 };
 pub use char_set_ops::{
-    AddCharacterEntry, RecodeCharacterEntry, ReorderCharacterEntries, add_character_entry,
-    recode_character_entry, reorder_character_entries,
+    AddCharacterEntry, RecodeCharacterEntry, RemoveCharacterEntry, ReorderCharacterEntries,
+    add_character_entry, recode_character_entry, remove_character_entry, reorder_character_entries,
 };
 pub use error::FontSpaceError;
 pub use glyph_ops::{
@@ -58,6 +58,8 @@ pub fn apply_change_set(doc: &mut FontSpace, change_set: &ChangeSet) -> Result<(
             ObjectChange::PagesReordered(reorder) => apply_pages_reorder(doc, reorder)?,
             ObjectChange::GuideChanged(guide_change) => apply_guide_change(doc, guide_change)?,
             ObjectChange::CharacterSetChanged(change) => apply_character_set_change(doc, change)?,
+            ObjectChange::GlyphRemoved(placement) => apply_glyph_remove(doc, placement)?,
+            ObjectChange::GlyphInserted(placement) => apply_glyph_insert(doc, placement)?,
         }
     }
     Ok(())
@@ -134,6 +136,35 @@ fn apply_pages_reorder(doc: &mut FontSpace, change: &PagesReorder) -> Result<(),
         .iter()
         .filter_map(|id| pages_by_id.remove(id))
         .collect();
+    Ok(())
+}
+
+/// Removes the (single) glyph for `placement.code` from its page.
+fn apply_glyph_remove(
+    doc: &mut FontSpace,
+    placement: &GlyphPlacement,
+) -> Result<(), FontSpaceError> {
+    let glyph_set = glyph_set_mut(doc, placement.glyph_set_id)?;
+    let page = page_mut(glyph_set, placement.glyph_set_id, placement.page_id)?;
+    page.glyphs.retain(|glyph| glyph.code != placement.code);
+    Ok(())
+}
+
+/// Re-inserts a whole glyph at its recorded index (the inverse of a removal).
+fn apply_glyph_insert(
+    doc: &mut FontSpace,
+    placement: &GlyphPlacement,
+) -> Result<(), FontSpaceError> {
+    let glyph_set = glyph_set_mut(doc, placement.glyph_set_id)?;
+    let page = page_mut(glyph_set, placement.glyph_set_id, placement.page_id)?;
+    let index = placement.index.min(page.glyphs.len());
+    page.glyphs.insert(
+        index,
+        Glyph {
+            code: placement.code,
+            bitmap: placement.bitmap.clone(),
+        },
+    );
     Ok(())
 }
 

@@ -124,6 +124,7 @@ pub struct ChangeSet {
 pub enum ObjectChange {
     GlyphChanged(GlyphChange),
     GlyphRemoved(GlyphRemoved),       // e.g. entry-removal cascade
+    GlyphInserted(GlyphInserted),     // inverse of GlyphRemoved; restores at its index
     PageInserted(PageInserted),
     PageRemoved(PageRemoved),
     PagesReordered(PagesReorder),     // before/after page-id order; inverse swaps them

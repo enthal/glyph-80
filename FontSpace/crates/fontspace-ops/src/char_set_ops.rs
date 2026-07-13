@@ -10,7 +10,8 @@ use fontspace_model::{CharacterEntry, CharacterSetId, FontSpace};
 
 use crate::apply_change_set;
 use crate::change_set::{
-    ChangeSet, CharacterSetChange, FontSpaceWarning, ObjectChange, OrphanedGlyph,
+    CascadedGlyph, ChangeSet, CharacterSetChange, FontSpaceWarning, GlyphPlacement, ObjectChange,
+    OrphanedGlyph,
 };
 use crate::error::FontSpaceError;
 use crate::util::is_permutation;
@@ -41,6 +42,15 @@ pub struct RecodeCharacterEntry {
     pub character_set_id: CharacterSetId,
     pub from_code: u32,
     pub to_code: u32,
+}
+
+/// Remove an entry and **cascade-delete** every glyph with that code across all
+/// pages of every glyph set referencing this character set (spec/04 §4.4, spec/07
+/// §7.8). Atomic and invertible; the removed glyphs are listed in a warning.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RemoveCharacterEntry {
+    pub character_set_id: CharacterSetId,
+    pub code: u32,
 }
 
 /// Applies `AddCharacterEntry`.
@@ -205,6 +215,78 @@ pub fn recode_character_entry(
 
     let change_set = ChangeSet {
         object_changes: vec![change],
+        warnings,
+    };
+    apply_change_set(doc, &change_set)?;
+    Ok(change_set)
+}
+
+/// Applies `RemoveCharacterEntry`: removes the entry and cascade-deletes referencing
+/// glyphs across the whole document, atomically, returning them in a warning.
+pub fn remove_character_entry(
+    doc: &mut FontSpace,
+    req: &RemoveCharacterEntry,
+) -> Result<ChangeSet, FontSpaceError> {
+    let (object_changes, warnings) = {
+        let character_set = doc
+            .character_set(req.character_set_id)
+            .ok_or(FontSpaceError::CharacterSetIdNotFound(req.character_set_id))?;
+        if !character_set.contains_code(req.code) {
+            return Err(FontSpaceError::EntryCodeNotFound {
+                character_set: req.character_set_id,
+                code: req.code,
+            });
+        }
+        let before = character_set.entries.clone();
+        let after: Vec<CharacterEntry> = before
+            .iter()
+            .filter(|entry| entry.code != req.code)
+            .cloned()
+            .collect();
+
+        // The entry removal, then a GlyphRemoved for every referencing glyph.
+        let mut object_changes = vec![ObjectChange::CharacterSetChanged(CharacterSetChange {
+            character_set_id: req.character_set_id,
+            before,
+            after,
+        })];
+        let mut removed = Vec::new();
+        for glyph_set in doc
+            .glyph_sets
+            .iter()
+            .filter(|glyph_set| glyph_set.character_set_id == req.character_set_id)
+        {
+            for page in &glyph_set.pages {
+                if let Some(index) = page.glyphs.iter().position(|glyph| glyph.code == req.code) {
+                    object_changes.push(ObjectChange::GlyphRemoved(GlyphPlacement {
+                        glyph_set_id: glyph_set.id,
+                        page_id: page.id,
+                        index,
+                        code: req.code,
+                        bitmap: page.glyphs[index].bitmap.clone(),
+                    }));
+                    removed.push(CascadedGlyph {
+                        glyph_set_id: glyph_set.id,
+                        page_id: page.id,
+                        code: req.code,
+                    });
+                }
+            }
+        }
+        let warnings = if removed.is_empty() {
+            Vec::new()
+        } else {
+            vec![FontSpaceWarning::RemoveCascade {
+                character_set_id: req.character_set_id,
+                code: req.code,
+                removed,
+            }]
+        };
+        (object_changes, warnings)
+    };
+
+    let change_set = ChangeSet {
+        object_changes,
         warnings,
     };
     apply_change_set(doc, &change_set)?;
