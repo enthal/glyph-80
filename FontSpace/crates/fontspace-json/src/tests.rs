@@ -159,6 +159,49 @@ fn load_reports_dangling_glyph_as_warning_not_error() {
 }
 
 #[test]
+fn dangling_glyph_round_trip_is_byte_stable() {
+    // The dangling-append-sorted-by-code path (spec/06 §6.4) must also be
+    // determinism-stable, not just tolerated.
+    let mut doc = golden_doc();
+    let size = doc.glyph_sets[0].glyph_size;
+    for code in [0x99u32, 0x43] {
+        let mut mark = Bitmap::new_blank(size);
+        mark.set(0, 0, true).unwrap();
+        doc.glyph_sets[0].pages[0]
+            .glyphs
+            .push(Glyph { code, bitmap: mark });
+    }
+    let once = save(&doc);
+    let twice = save(&load(&once).unwrap().document);
+    assert_eq!(once, twice);
+    // 0x43 has no entry (entries are 0x20/0x41/0x42) -> dangling, appended after
+    // 0x41/0x42 in ascending code order: ... 0x42, 0x43, 0x99.
+    let codes: Vec<u32> = load(&once).unwrap().document.glyph_sets[0].pages[0]
+        .glyphs
+        .iter()
+        .map(|g| g.code)
+        .collect();
+    assert_eq!(codes, vec![0x41, 0x42, 0x43, 0x99]);
+}
+
+#[test]
+fn all_blank_page_serializes_to_empty_glyph_array() {
+    // spec/04 §4.5 / spec/15 §15.3: an all-blank page stores an empty glyphs array.
+    let mut doc = golden_doc();
+    let size = doc.glyph_sets[0].glyph_size;
+    for glyph in &mut doc.glyph_sets[0].pages[0].glyphs {
+        glyph.bitmap = Bitmap::new_blank(size); // blank every glyph
+    }
+    let json = save(&doc);
+    assert!(
+        json.contains("\"glyphs\": []"),
+        "all-blank page => empty array"
+    );
+    let reloaded = load(&json).unwrap().document;
+    assert!(reloaded.glyph_sets[0].pages[0].glyphs.is_empty());
+}
+
+#[test]
 fn unsupported_version_is_rejected() {
     let json = json!({
         "format_version": 999,
