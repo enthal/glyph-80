@@ -28,6 +28,7 @@ This file is the table of contents. Each chapter under [spec/](spec/) is canonic
 16. [Performance, safety, and limits](spec/16-performance-safety-limits.md) — scale, atomic file safety, and resource limits.
 17. [Invariants and glossary](spec/17-invariants-and-glossary.md) — the consolidated non-negotiables and shared vocabulary.
 18. [Per-platform support](spec/18-platform-support.md) — macOS native menu bar, Linux desktop integration, and distribution.
+19. [CI and local hooks](spec/19-ci-and-hooks.md) — the pre-commit hook, the CI gate and its OS matrix, and branch-protection contexts.
 
 ## Reading order
 

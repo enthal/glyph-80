@@ -15,8 +15,10 @@ Goal: an empty but disciplined Cargo workspace.
 
 - `FontSpace/Cargo.toml` virtual workspace; empty `fontspace-model` and `fontspace-cli` crates; `#![forbid(unsafe_code)]` in each.
 - `rust-toolchain.toml` (pin stable), `rustfmt.toml`, `.gitignore` already covers `target/`.
-- CI workflow producing the named checks `fmt`, `clippy`, `test` (so the `main` branch rule can require them — see the repo README note). Wire this and tell the user to add the contexts to branch protection.
-- Definition of done: `cargo build/test/clippy/fmt` succeed on an empty tree; CI is green.
+- **Pre-commit hook** ([spec/19](spec/19-ci-and-hooks.md) §19.2): git hooks are repo-global, so establish a **repo-root** dispatcher (recommended: `lefthook` with `glob: "FontSpace/**"`, or a hand-rolled `core.hooksPath` dispatcher) — a repo-level, one-time setup since FontSpace is the first sub-project. FontSpace contributes `FontSpace/scripts/precommit.sh` running `fmt` + `clippy` + the markdown no-hardwrap lint (not the test suite), invoked when `FontSpace/**` is staged. Also add a one-line note to the repo-root [../CLAUDE.md](../CLAUDE.md) that the hook mechanism lives at the root.
+- **CI workflow** ([spec/19](spec/19-ci-and-hooks.md) §19.3): `.github/workflows/fontspace-ci.yml`, path-filtered to `FontSpace/**`, with jobs `fmt` (ubuntu), `clippy` + `test` on a **macOS + Linux matrix** (so the `cfg`-gated platform code in chapter 18 is actually checked), and `markdown`. Cache cargo; pin toolchain.
+- **Branch protection** ([spec/19](spec/19-ci-and-hooks.md) §19.4): once CI runs, add the six required contexts (`fontspace / fmt`, `fontspace / clippy (…)` ×2, `fontspace / test (…)` ×2, `fontspace / markdown`) to the `main` rule — this closes the item deferred at repo setup. Note the monorepo path-filter gotcha (§19.5) for when a second sub-project lands.
+- Definition of done: `cargo build/test/clippy/fmt` succeed on an empty tree; CI is green on the matrix; the hook installs and blocks a mis-formatted commit.
 
 ## Milestone 1 — Core model, JSON, and CLI (no GUI)
 

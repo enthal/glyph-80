@@ -77,6 +77,8 @@ Run from the `FontSpace/` directory (it is its own Cargo workspace).
 
 Run `cargo fmt`, `cargo clippy`, and `cargo test --workspace` before every commit. Treat clippy warnings as errors.
 
+`fmt` + `clippy` + the markdown no-hardwrap lint run in **both** the developer-installable pre-commit hook and CI; the full `cargo test` suite is the **CI-only gate** (the strict tests-first workflow means failing tests are committed on purpose, so the hook must not block them). CI runs `clippy`/`test` on a macOS + Linux matrix so the `cfg`-gated platform code (chapter 18) is actually checked. Full design: [spec/19-ci-and-hooks.md](spec/19-ci-and-hooks.md).
+
 ## Design principles
 
 Operational reminders; the rationale is in the spec.

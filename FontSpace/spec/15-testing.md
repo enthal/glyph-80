@@ -1,6 +1,6 @@
 # 15. Testing Strategy
 
-The hybrid strict/pragmatic discipline is defined in [../CLAUDE.md](../CLAUDE.md). This chapter lists what must be covered and by which tool. Determinism is mandatory: no real UUIDs, no `now()`, no unseeded random in tests — wire `SequentialIdGen` and fixed constants (chapter 3).
+The hybrid strict/pragmatic discipline is defined in [../CLAUDE.md](../CLAUDE.md). This chapter lists what must be covered and by which tool. Determinism is mandatory: no real UUIDs, no `now()`, no unseeded random in tests — wire `SequentialIdGen` and fixed constants (chapter 3). Where these tests run (pre-commit hook vs the CI gate, and the OS matrix that compiles the `cfg`-gated platform code) is specified in [19-ci-and-hooks.md](19-ci-and-hooks.md).
 
 ## 15.1 Unit tests (default, minimum bar)
 
