@@ -5,22 +5,32 @@
 //! all outputs, applies them atomically, and returns one [`ChangeSet`] — the
 //! undo/redo unit. Undo is "apply the inverse"; redo is "apply the change set again".
 //!
-//! Slices 4a–4b implement the glyph, page, and guide operations. The character-set
-//! edit operations (including the remove-cascade) arrive in the next slice.
+//! Slices 4a–4c implement the glyph, page, guide, and (add/reorder/recode)
+//! character-set edit operations. The one edit that cascades — remove entry — is the
+//! next slice.
 
 mod change_set;
+mod char_set_ops;
 mod error;
 mod glyph_ops;
 mod guide_ops;
 mod page_ops;
 mod selector;
+mod util;
 
 use std::collections::HashMap;
 
-use fontspace_model::{FontSpace, Glyph, GlyphPage, GlyphSet, GlyphSetId, PageId};
+use fontspace_model::{
+    CharacterSet, CharacterSetId, FontSpace, Glyph, GlyphPage, GlyphSet, GlyphSetId, PageId,
+};
 
 pub use change_set::{
-    ChangeSet, FontSpaceWarning, GlyphChange, GuideChange, ObjectChange, PageChange, PagesReorder,
+    ChangeSet, CharacterSetChange, FontSpaceWarning, GlyphChange, GuideChange, ObjectChange,
+    OrphanedGlyph, PageChange, PagesReorder,
+};
+pub use char_set_ops::{
+    AddCharacterEntry, RecodeCharacterEntry, ReorderCharacterEntries, add_character_entry,
+    recode_character_entry, reorder_character_entries,
 };
 pub use error::FontSpaceError;
 pub use glyph_ops::{
@@ -47,6 +57,7 @@ pub fn apply_change_set(doc: &mut FontSpace, change_set: &ChangeSet) -> Result<(
             ObjectChange::PageRemoved(page_change) => apply_page_remove(doc, page_change)?,
             ObjectChange::PagesReordered(reorder) => apply_pages_reorder(doc, reorder)?,
             ObjectChange::GuideChanged(guide_change) => apply_guide_change(doc, guide_change)?,
+            ObjectChange::CharacterSetChanged(change) => apply_character_set_change(doc, change)?,
         }
     }
     Ok(())
@@ -123,6 +134,25 @@ fn apply_pages_reorder(doc: &mut FontSpace, change: &PagesReorder) -> Result<(),
         .iter()
         .filter_map(|id| pages_by_id.remove(id))
         .collect();
+    Ok(())
+}
+
+fn character_set_mut(
+    doc: &mut FontSpace,
+    id: CharacterSetId,
+) -> Result<&mut CharacterSet, FontSpaceError> {
+    doc.character_sets
+        .iter_mut()
+        .find(|character_set| character_set.id == id)
+        .ok_or(FontSpaceError::CharacterSetIdNotFound(id))
+}
+
+fn apply_character_set_change(
+    doc: &mut FontSpace,
+    change: &CharacterSetChange,
+) -> Result<(), FontSpaceError> {
+    let character_set = character_set_mut(doc, change.character_set_id)?;
+    character_set.entries = change.after.clone();
     Ok(())
 }
 

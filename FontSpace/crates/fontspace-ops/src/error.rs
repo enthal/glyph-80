@@ -78,4 +78,34 @@ pub enum FontSpaceError {
         page: PageId,
         guide: GuideId,
     },
+
+    #[error("character set {0:?} not found")]
+    CharacterSetIdNotFound(CharacterSetId),
+
+    #[error("character set {character_set:?}: an entry with code {code:#06x} already exists")]
+    DuplicateEntryCode {
+        character_set: CharacterSetId,
+        code: u32,
+    },
+
+    #[error("character set {character_set:?}: no entry with code {code:#06x}")]
+    EntryCodeNotFound {
+        character_set: CharacterSetId,
+        code: u32,
+    },
+
+    #[error("character set {character_set:?}: entry index {index} out of range (0..={len})")]
+    EntryIndexOutOfRange {
+        character_set: CharacterSetId,
+        index: usize,
+        len: usize,
+    },
+
+    #[error(
+        "character set {character_set:?}: reorder is not a permutation of the current {expected} entry code(s)"
+    )]
+    InvalidEntryOrder {
+        character_set: CharacterSetId,
+        expected: usize,
+    },
 }

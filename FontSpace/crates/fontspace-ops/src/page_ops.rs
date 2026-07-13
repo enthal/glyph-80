@@ -2,14 +2,13 @@
 //! set. Each returns one invertible [`ChangeSet`]; add/remove mint no glyph data,
 //! and reorder never touches glyphs.
 
-use std::collections::HashSet;
-
 use fontspace_model::{FontSpace, GlyphPage, GlyphSetId, IdGen, PageId};
 
 use crate::apply_change_set;
 use crate::change_set::{ChangeSet, ObjectChange, PageChange, PagesReorder};
 use crate::error::FontSpaceError;
 use crate::selector::{PageSelector, resolve_pages};
+use crate::util::is_permutation;
 
 /// Add a new empty page to a glyph set, at `at_index` (or the end).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -136,13 +135,4 @@ pub fn reorder_pages(doc: &mut FontSpace, req: &ReorderPages) -> Result<ChangeSe
     };
     apply_change_set(doc, &change_set)?;
     Ok(change_set)
-}
-
-/// Whether `candidate` is a permutation of `current`: same length, same set, and no
-/// duplicates in `candidate`.
-fn is_permutation(candidate: &[PageId], current: &[PageId]) -> bool {
-    let candidate_set: HashSet<PageId> = candidate.iter().copied().collect();
-    candidate.len() == current.len()
-        && candidate_set.len() == candidate.len()
-        && current.iter().all(|id| candidate_set.contains(id))
 }
