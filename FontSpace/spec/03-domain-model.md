@@ -116,7 +116,7 @@ pub struct GlyphPage {
 }
 ```
 
-The in-memory `glyphs` collection is indexed by `code` for lookup (`glyph_by_code`), but its **canonical order is charset-entry order** (chapter 4 §Ordering) so that storage and display are stable and diffable. Page order within a glyph set is significant and may later participate in export ordering.
+The in-memory `glyphs` collection is looked up by `code` (`glyph_of_code`), but its **canonical order is charset-entry order** (chapter 4 §Ordering) so that storage and display are stable and diffable. Page order within a glyph set is significant and may later participate in export ordering.
 
 There is no `page.glyphs.len() == entries.len()` invariant. The invariants that replace it (chapter 4 §Invariants) are referential integrity (every glyph's `code` exists in the referenced character set) and uniqueness (at most one glyph per `code` per page). A glyph whose `code` is absent from the character set is **dangling** — tolerated with a warning on load, and produced only transiently (an entry deletion cascade removes such glyphs; see chapter 4).
 

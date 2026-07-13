@@ -58,12 +58,12 @@ impl GlyphPage {
     }
 
     /// The glyph rendering `code` on this page, if one is stored.
-    pub fn glyph_by_code(&self, code: u32) -> Option<&Glyph> {
+    pub fn glyph_of_code(&self, code: u32) -> Option<&Glyph> {
         self.glyphs.iter().find(|glyph| glyph.code == code)
     }
 
     /// Mutable access to the glyph rendering `code`, if one is stored.
-    pub fn glyph_by_code_mut(&mut self, code: u32) -> Option<&mut Glyph> {
+    pub fn glyph_of_code_mut(&mut self, code: u32) -> Option<&mut Glyph> {
         self.glyphs.iter_mut().find(|glyph| glyph.code == code)
     }
 }
@@ -100,7 +100,7 @@ impl GlyphSet {
     }
 
     /// The page with `id`, if present.
-    pub fn page_by_id(&self, id: PageId) -> Option<&GlyphPage> {
+    pub fn page_of_id(&self, id: PageId) -> Option<&GlyphPage> {
         self.pages.iter().find(|page| page.id == id)
     }
 }
@@ -111,15 +111,15 @@ mod tests {
     use crate::SequentialIdGen;
 
     #[test]
-    fn glyph_by_code_finds_sparse_entries() {
+    fn glyph_of_code_finds_sparse_entries() {
         let mut ids = SequentialIdGen::new();
         let mut page = GlyphPage::new(&mut ids, "page", "");
         page.glyphs.push(Glyph {
             code: 0x41,
             bitmap: Bitmap::new_blank(GlyphSize::new(8, 8)),
         });
-        assert_eq!(page.glyph_by_code(0x41).map(|g| g.code), Some(0x41));
-        assert!(page.glyph_by_code(0x42).is_none()); // absent = blank
-        page.glyph_by_code_mut(0x41).unwrap().code = 0x41;
+        assert_eq!(page.glyph_of_code(0x41).map(|g| g.code), Some(0x41));
+        assert!(page.glyph_of_code(0x42).is_none()); // absent = blank
+        page.glyph_of_code_mut(0x41).unwrap().code = 0x41;
     }
 }
