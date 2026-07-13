@@ -1,0 +1,87 @@
+{
+  "format_version": 1,
+  "id": "00000000-0000-0000-0000-000000000005",
+  "metadata": {
+    "name": "Golden",
+    "description": "canonical golden document"
+  },
+  "character_sets": [
+    {
+      "id": "00000000-0000-0000-0000-000000000001",
+      "name": "ASCII subset",
+      "description": "space and two letters",
+      "entries": [
+        {
+          "code": "0x20",
+          "label": "SPACE"
+        },
+        {
+          "code": "0x41",
+          "label": "LATIN CAPITAL LETTER A"
+        },
+        {
+          "code": "0x42",
+          "label": "LATIN CAPITAL LETTER B"
+        }
+      ]
+    }
+  ],
+  "glyph_sets": [
+    {
+      "id": "00000000-0000-0000-0000-000000000002",
+      "name": "Terminal 8x8",
+      "description": "demo",
+      "glyph_size": {
+        "width": 8,
+        "height": 8
+      },
+      "character_set_id": "00000000-0000-0000-0000-000000000001",
+      "pages": [
+        {
+          "id": "00000000-0000-0000-0000-000000000003",
+          "name": "Regular",
+          "description": "primary page",
+          "guides": [
+            {
+              "id": "00000000-0000-0000-0000-000000000004",
+              "name": "Baseline",
+              "axis": "horizontal",
+              "position": 7,
+              "visible": true,
+              "locked": false
+            }
+          ],
+          "glyphs": [
+            {
+              "code": "0x41",
+              "pixels": [
+                "........",
+                "...##...",
+                "..#..#..",
+                "..####..",
+                "..#..#..",
+                "........",
+                "........",
+                "........"
+              ]
+            },
+            {
+              "code": "0x42",
+              "pixels": [
+                "........",
+                "..##....",
+                "..#.#...",
+                "..##....",
+                "..#.#...",
+                "..#.....",
+                "........",
+                "........"
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "export_configs": []
+}
