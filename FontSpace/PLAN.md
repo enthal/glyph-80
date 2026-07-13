@@ -52,9 +52,10 @@ Steps:
 5. Page overview; character-set view (with pre-apply impact for remove/recode); guides UI.
 6. Text preview (image render) ([spec/09](spec/09-rendering.md)).
 7. Open/Save/Save As/Revert with atomic writes; dirty tracking.
-8. `egui_kittest` snapshots for editor, page overview, preview; snapshot review.
+8. **Platform identity + Linux desktop integration** ([spec/18](spec/18-platform-support.md)): `APP_ID`/storage-namespace constants, embedded `assets/app_icon.png` → window icon, `with_app_id`, the self-installing `.desktop`+icon (Exec-resolves / AppImage / `StartupWMClass` / `update-desktop-database`), and the `cursor_env` re-exec bridge. Port Termica's pure helpers (`desktop_entry_contents`, `desktop_exec_field`, `resolve_exec_path`) with their unit tests, plus the `APP_ID == packager identifier` test.
+9. `egui_kittest` snapshots for editor, page overview, preview; snapshot review.
 
-Definition of done: draw a glyph, undo/redo the whole stroke, add guides, view a page, preview text, save and reopen — all through the GUI.
+Definition of done: draw a glyph, undo/redo the whole stroke, add guides, view a page, preview text, save and reopen — all through the GUI; on Linux the window carries our icon and the app appears in the launcher.
 
 ## Milestone 3 — Multi-document workspace, fragments, clipboard
 
@@ -81,7 +82,7 @@ Steps:
 2. Page-overview selection operations (shift/clear/invert on a range); range copy/paste.
 3. Text-preview presets and multi-page mode; missing-glyph policy.
 4. Inspector for glyph/page (export inspector arrives with M5).
-5. Menus, keyboard bindings, "focus glyph editor", named-layout groundwork.
+5. **Menu system** ([spec/18](spec/18-platform-support.md) §18.3–18.4): the one command-registry tree; the in-window `egui` presenter; the native macOS `NSMenu` presenter (`muda`) with winit default-menu suppression, creator-callback install timing, `Box::leak` lifetime, and `MenuEvent` routing for the full menu bar; keyboard bindings kept in sync with the native accelerators; "focus glyph editor"; named-layout groundwork.
 
 Definition of done: compare one code across three files, overlay their differences, and copy the reference glyph into another.
 

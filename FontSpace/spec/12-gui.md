@@ -103,3 +103,5 @@ Selection-driven. **Glyph:** file, glyph set, page, `code`, label, geometry, on-
 ## 12.12 Menus
 
 `File · Edit · View · Character Set · Glyph · Page · Export · Window · Help`. Core file actions: New, Open, Open Recent, Save, Save As, Close, Revert, Export, Recover Unsaved Work.
+
+The menu bar is defined **once** as a command tree and rendered by two presenters — a native macOS `NSMenu` (all top-level menus, not just the app menu) and an in-window `egui` menu bar on Linux/Windows. See [18-platform-support.md](18-platform-support.md) §18.3–18.4 for the registry, the macOS install timing/lifetime caveats, and how accelerators stay in sync with §12.5.
