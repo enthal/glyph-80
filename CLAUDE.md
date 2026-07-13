@@ -37,6 +37,7 @@ When a sub-project directory has its own `CLAUDE.md`, that file is canonical for
 - **One PR per logical change.** Small and reviewable. If a GitHub Issue exists, include `Closes #<n>` in the PR description.
 - **Squash on merge**; keep the branch. After merging, switch to `main` and pull.
 - Before merging, update [README.md](README.md) (and the relevant sub-project docs) to reflect any user-facing changes.
+- **Merge ceremony.** Before squash-merging any PR, in order: (1) run the [`merge-review`](.claude/skills/merge-review/SKILL.md) skill over the branch diff and handle its findings — fix the worthwhile ones (spec-syncing in the same commit), or defer the rest out loud with a reason; (2) confirm `fmt` + `clippy` + `test` are green and CI has passed; (3) update `README.md`/sub-project docs for any user-facing change. Only then squash-merge, switch to `main`, and pull. The review is not optional — it is the gate that keeps code honest against the spec and CLAUDE.md.
 
 ## Command governance
 
