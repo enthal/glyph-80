@@ -30,9 +30,15 @@ The **CLI** (`fontspace`, from `fontspace-cli`) is the runnable surface today â€
 ```sh
 cargo run -p fontspace-cli -- new demo.fontspace.json --name "Demo"
 cargo run -p fontspace-cli -- info demo.fontspace.json
-cargo run -p fontspace-cli -- render-text demo.fontspace.json --glyph-set "Terminal 8x16" --glyphs 0x41-0x5A
-cargo run -p fontspace-cli -- shift demo.fontspace.json --glyph-set "Terminal 8x16" --pages Regular --glyphs A-Z --dx 1 --dy 0 --dry-run
+cargo run -p fontspace-cli -- render-text demo.fontspace.json \
+  --glyph-set "Terminal 8x16" --glyphs 0x41-0x5A
+cargo run -p fontspace-cli -- render-text demo.fontspace.json \
+  --glyph-set "Terminal 8x16" --text-nl "Hello\nWorld"
+cargo run -p fontspace-cli -- shift demo.fontspace.json \
+  --glyph-set "Terminal 8x16" --pages Regular --glyphs A-Z --dx 1 --dy 0 --dry-run
 ```
+
+`render-text` draws one **subject** â€” `--glyphs <selector>` (defaults to *all* glyphs when omitted), `--text <string>` (rendered as one line), or `--text-nl <string>` (newlines start a new line); the three are mutually exclusive. For `--text`/`--text-nl`, each input character maps to a `code` by its Unicode scalar (the byte value for Latin-1 input) and characters with no character-set entry are ignored.
 
 Mutating commands (`set-pixels`, `shift`) write canonical JSON atomically and support `--dry-run`; `--seq` wires the deterministic id generator for reproducible fixtures. (`extract` and machine-readable JSON errors arrive with later milestones.)
 

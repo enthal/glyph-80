@@ -18,7 +18,7 @@
 //! `PagesHorizontal`, which places pages side by side joined by `page_separator`.
 //! Finally all rows are joined by `row_separator` (typically `"\n"`).
 
-use fontspace_model::{Bitmap, FontSpace, GlyphSetId};
+use fontspace_model::{Bitmap, FontSpace, GlyphPage, GlyphSetId, GlyphSize};
 use fontspace_ops::{
     FontSpaceError, GlyphSelector, PageSelector, resolve_glyph_codes_in, resolve_pages_in,
 };
@@ -50,6 +50,28 @@ pub struct TextGridRequest {
     pub scale_y: usize,
 }
 
+/// A request to render an ordered run of glyphs addressed by character `code`
+/// (spec/09 §9.2.1) — as opposed to the set-selection of [`TextGridRequest`]. Each
+/// inner vector of `rows` is one line of codes in input order, **repeats allowed**;
+/// codes with **no character-set entry are ignored** (they are not characters of
+/// this font), while an entry whose glyph is absent on the page renders blank (so a
+/// space still occupies its cell). This is the projection the CLI's `--text` /
+/// `--text-nl` use.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TextStringRequest {
+    pub glyph_set_id: GlyphSetId,
+    pub pages: PageSelector,
+    /// Lines of character `code`s in order; each inner vec is one output line.
+    pub rows: Vec<Vec<u32>>,
+    pub on: String,
+    pub off: String,
+    pub glyph_separator: String,
+    pub row_separator: String,
+    pub page_separator: String,
+    pub scale_x: usize,
+    pub scale_y: usize,
+}
+
 /// A rectangular-ish block of visual rows.
 type Block = Vec<String>;
 
@@ -71,11 +93,15 @@ pub fn render_text_grid(doc: &FontSpace, req: &TextGridRequest) -> Result<String
         let glyph_blocks: Vec<Block> = codes
             .iter()
             .map(|&code| {
-                let bitmap = page
-                    .glyph_of_code(code)
-                    .map(|glyph| glyph.bitmap.clone())
-                    .unwrap_or_else(|| Bitmap::new_blank(size));
-                render_glyph(&bitmap, &req.on, &req.off, req.scale_x, req.scale_y)
+                code_block(
+                    page,
+                    size,
+                    code,
+                    &req.on,
+                    &req.off,
+                    req.scale_x,
+                    req.scale_y,
+                )
             })
             .collect();
         page_blocks.push(arrange_glyphs(glyph_blocks, req));
@@ -86,6 +112,76 @@ pub fn render_text_grid(doc: &FontSpace, req: &TextGridRequest) -> Result<String
         _ => vstack(&page_blocks, &req.page_separator),
     };
     Ok(combined.join(&req.row_separator))
+}
+
+/// Render an ordered run of glyphs addressed by character `code` (spec/09 §9.2.1).
+///
+/// Unlike [`render_text_grid`], `rows` is an ordered sequence with repeats: each
+/// inner vector is one output line. A code renders **iff the glyph set's character
+/// set has an entry for it**; codes with no entry are skipped (they are not
+/// characters of this font). A rendered code whose glyph is absent on the page
+/// draws blank, so a defined-but-blank character (e.g. a space) still occupies its
+/// cell. Lines stack directly (a newline in the source begins a new line); pages
+/// stack vertically, joined by `page_separator`.
+pub fn render_text_string(
+    doc: &FontSpace,
+    req: &TextStringRequest,
+) -> Result<String, FontSpaceError> {
+    let page_ids = resolve_pages_in(doc, req.glyph_set_id, &req.pages)?;
+    let glyph_set = doc
+        .glyph_set(req.glyph_set_id)
+        .ok_or(FontSpaceError::GlyphSetNotFound(req.glyph_set_id))?;
+    let size = glyph_set.glyph_size;
+    let character_set = doc.character_set(glyph_set.character_set_id);
+
+    let mut page_blocks: Vec<Block> = Vec::new();
+    for page_id in &page_ids {
+        let Some(page) = glyph_set.page_of_id(*page_id) else {
+            continue;
+        };
+        // Each source line becomes a horizontal strip; lines stack directly.
+        let mut page_block: Block = Vec::new();
+        for row in &req.rows {
+            let glyph_blocks: Vec<Block> = row
+                .iter()
+                .filter(|&&code| character_set.is_some_and(|cs| cs.contains_code(code)))
+                .map(|&code| {
+                    code_block(
+                        page,
+                        size,
+                        code,
+                        &req.on,
+                        &req.off,
+                        req.scale_x,
+                        req.scale_y,
+                    )
+                })
+                .collect();
+            page_block.extend(hstack(&glyph_blocks, &req.glyph_separator));
+        }
+        page_blocks.push(page_block);
+    }
+
+    Ok(vstack(&page_blocks, &req.page_separator).join(&req.row_separator))
+}
+
+/// Renders the glyph for `code` on `page` to a block, applying the absent-as-blank
+/// rule (spec/05 §5.6, spec/09) in one place: a code with no stored glyph draws a
+/// blank cell of the glyph-set geometry. Shared by both text projections.
+fn code_block(
+    page: &GlyphPage,
+    size: GlyphSize,
+    code: u32,
+    on: &str,
+    off: &str,
+    scale_x: usize,
+    scale_y: usize,
+) -> Block {
+    let bitmap = page
+        .glyph_of_code(code)
+        .map(|glyph| glyph.bitmap.clone())
+        .unwrap_or_else(|| Bitmap::new_blank(size));
+    render_glyph(&bitmap, on, off, scale_x, scale_y)
 }
 
 /// Renders one glyph to a block: each pixel → its `on`/`off` token repeated `scale_x`

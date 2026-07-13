@@ -291,3 +291,101 @@ fn unknown_glyph_set_errors() {
         FontSpaceError::GlyphSetNotFound(_)
     ));
 }
+
+// --- text-string rendering (spec/09 §9.2.1) -------------------------------
+
+use crate::{TextStringRequest, render_text_string};
+
+/// A text-string request over the 3×3 fixture: `on`/`off` = `#`/`.`, no glyph
+/// separator (contiguous text), one page.
+fn text(glyph_set: GlyphSetId, rows: Vec<Vec<u32>>) -> TextStringRequest {
+    TextStringRequest {
+        glyph_set_id: glyph_set,
+        pages: PageSelector::All,
+        rows,
+        on: "#".into(),
+        off: ".".into(),
+        glyph_separator: String::new(),
+        row_separator: "\n".into(),
+        page_separator: "\n--\n".into(),
+        scale_x: 1,
+        scale_y: 1,
+    }
+}
+
+#[test]
+fn text_string_repeats_a_glyph() {
+    let (doc, gs) = fixture();
+    // 0x41 twice, side by side (X-pattern: #.# / .#. / #.#).
+    let req = text(gs, vec![vec![0x41, 0x41]]);
+    assert_eq!(
+        render_text_string(&doc, &req).unwrap(),
+        "#.##.#\n.#..#.\n#.##.#"
+    );
+}
+
+#[test]
+fn text_string_ignores_codes_with_no_charset_entry() {
+    let (doc, gs) = fixture();
+    // 0x43 has no entry → ignored; result equals rendering just the two 0x41s.
+    let with_unknown = render_text_string(&doc, &text(gs, vec![vec![0x41, 0x43, 0x41]])).unwrap();
+    let without = render_text_string(&doc, &text(gs, vec![vec![0x41, 0x41]])).unwrap();
+    assert_eq!(with_unknown, without);
+}
+
+#[test]
+fn text_string_renders_entry_without_glyph_as_blank() {
+    let (doc, gs) = fixture();
+    // 0x42 has an entry but no stored glyph → a blank 3×3 cell (not skipped).
+    let req = text(gs, vec![vec![0x42]]);
+    assert_eq!(render_text_string(&doc, &req).unwrap(), "...\n...\n...");
+}
+
+#[test]
+fn text_string_newline_starts_a_new_line() {
+    let (doc, gs) = fixture();
+    // Two lines of one 0x41 each → the second X stacks directly below the first.
+    let req = text(gs, vec![vec![0x41], vec![0x41]]);
+    assert_eq!(
+        render_text_string(&doc, &req).unwrap(),
+        "#.#\n.#.\n#.#\n#.#\n.#.\n#.#"
+    );
+}
+
+#[test]
+fn text_string_empty_line_contributes_nothing() {
+    let (doc, gs) = fixture();
+    // An all-unknown (or empty) line adds no rows.
+    let req = text(gs, vec![vec![0x41], vec![], vec![0x41]]);
+    assert_eq!(
+        render_text_string(&doc, &req).unwrap(),
+        "#.#\n.#.\n#.#\n#.#\n.#.\n#.#"
+    );
+}
+
+#[test]
+fn text_string_stacks_pages_with_page_separator() {
+    let (mut doc, gs) = fixture();
+    // Add a second, empty page: 0x41 renders blank there.
+    let mut ids = SequentialIdGen::new();
+    doc.glyph_sets[0]
+        .pages
+        .push(GlyphPage::new(&mut ids, "Blank", ""));
+    let mut req = text(gs, vec![vec![0x41]]);
+    req.page_separator = "--".into(); // single-line separator for a clean assertion
+    // Page "Regular" (X pattern), separator, page "Blank" (3×3 blank).
+    assert_eq!(
+        render_text_string(&doc, &req).unwrap(),
+        "#.#\n.#.\n#.#\n--\n...\n...\n..."
+    );
+}
+
+#[test]
+fn text_string_with_no_character_set_renders_nothing() {
+    let (mut doc, gs) = fixture();
+    // Drop the character set the glyph set references (a dangling reference): with
+    // no entries, every code is un-gated and ignored, so the render is empty.
+    doc.character_sets.clear();
+    let req = text(gs, vec![vec![0x41, 0x42]]);
+    assert_eq!(render_text_string(&doc, &req).unwrap(), "");
+}

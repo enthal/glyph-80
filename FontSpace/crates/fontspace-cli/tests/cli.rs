@@ -11,7 +11,9 @@ use fontspace_model::{
     SequentialIdGen,
 };
 use fontspace_ops::{GlyphSelector, PageSelector, ShiftGlyphs, shift_glyphs};
-use fontspace_render::{RenderLayout, TextGridRequest, render_text_grid};
+use fontspace_render::{
+    RenderLayout, TextGridRequest, TextStringRequest, render_text_grid, render_text_string,
+};
 
 /// A small document: character set (0x41, 0x42), an 8×8 glyph set named "gs" with a
 /// "Regular" page holding a drawn glyph for 0x41.
@@ -145,6 +147,111 @@ fn cli_render_text_matches_render_crate() {
     )
     .unwrap();
     assert_eq!(rendered, format!("{via_library}\n"));
+    fs::remove_dir_all(path.parent().unwrap()).ok();
+}
+
+#[test]
+fn cli_render_text_string_matches_render_crate() {
+    let doc = sample_doc();
+    let path = temp_path("render-text-str");
+    fs::write(&path, fontspace_json::save(&doc)).unwrap();
+
+    // `--text AB`: A is drawn, B has an entry but no glyph (renders blank), and the
+    // unknown '#' (0x23, no entry) is ignored.
+    let output = Command::new(env!("CARGO_BIN_EXE_fontspace"))
+        .args([
+            "render-text",
+            path.to_str().unwrap(),
+            "--glyph-set",
+            "gs",
+            "--text",
+            "A#B",
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let rendered = String::from_utf8(output.stdout).unwrap();
+
+    let glyph_set_id = doc.glyph_sets[0].id;
+    let via_library = render_text_string(
+        &doc,
+        &TextStringRequest {
+            glyph_set_id,
+            pages: PageSelector::All,
+            rows: vec![vec![0x41, 0x23, 0x42]],
+            on: "#".into(),
+            off: ".".into(),
+            glyph_separator: String::new(),
+            row_separator: "\n".into(),
+            page_separator: "\n\n".into(),
+            scale_x: 1,
+            scale_y: 1,
+        },
+    )
+    .unwrap();
+    assert_eq!(rendered, format!("{via_library}\n"));
+    fs::remove_dir_all(path.parent().unwrap()).ok();
+}
+
+#[test]
+fn cli_render_text_defaults_to_all_glyphs() {
+    let doc = sample_doc();
+    let path = temp_path("render-all");
+    fs::write(&path, fontspace_json::save(&doc)).unwrap();
+
+    // No render subject → all glyphs.
+    let output = Command::new(env!("CARGO_BIN_EXE_fontspace"))
+        .args(["render-text", path.to_str().unwrap(), "--glyph-set", "gs"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let rendered = String::from_utf8(output.stdout).unwrap();
+
+    let glyph_set_id = doc.glyph_sets[0].id;
+    let via_library = render_text_grid(
+        &doc,
+        &TextGridRequest {
+            glyph_set_id,
+            pages: PageSelector::All,
+            glyphs: GlyphSelector::All,
+            on: "#".into(),
+            off: ".".into(),
+            glyph_separator: String::new(),
+            row_separator: "\n".into(),
+            page_separator: "\n\n".into(),
+            layout: RenderLayout::GlyphsHorizontal,
+            scale_x: 1,
+            scale_y: 1,
+        },
+    )
+    .unwrap();
+    assert_eq!(rendered, format!("{via_library}\n"));
+    fs::remove_dir_all(path.parent().unwrap()).ok();
+}
+
+#[test]
+fn cli_render_text_rejects_multiple_subjects() {
+    let doc = sample_doc();
+    let path = temp_path("render-conflict");
+    fs::write(&path, fontspace_json::save(&doc)).unwrap();
+
+    let status = Command::new(env!("CARGO_BIN_EXE_fontspace"))
+        .args([
+            "render-text",
+            path.to_str().unwrap(),
+            "--glyph-set",
+            "gs",
+            "--text",
+            "A",
+            "--glyphs",
+            "0x41",
+        ])
+        .status()
+        .unwrap();
+    assert!(
+        !status.success(),
+        "combining --text and --glyphs must be rejected"
+    );
     fs::remove_dir_all(path.parent().unwrap()).ok();
 }
 
