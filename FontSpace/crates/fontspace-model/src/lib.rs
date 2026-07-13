@@ -12,16 +12,26 @@
 //! `05`, and `16`.
 
 mod bitmap;
+mod character_set;
 mod color;
+mod document;
+mod export_config;
 mod geometry;
+mod glyph_set;
 mod ids;
 mod limits;
+mod validation;
 
 pub use bitmap::{Bitmap, BitmapError, OverflowPolicy, flipped, inverted, shifted};
+pub use character_set::{CharacterEntry, CharacterSet};
 pub use color::Rgba;
+pub use document::{CURRENT_FORMAT_VERSION, FontSpace, FontSpaceMetadata};
+pub use export_config::ExportConfig;
 pub use geometry::{GlyphSize, GlyphSizeError, GuideAxis};
+pub use glyph_set::{Glyph, GlyphPage, GlyphSet, Guide};
 pub use ids::{
     CharacterSetId, ExportComponentId, ExportConfigId, FontSpaceId, GlyphSetId, GuideId, IdGen,
     PageId, RandomIdGen, SequentialIdGen,
 };
 pub use limits::Limits;
+pub use validation::{ValidationError, ValidationReport, ValidationWarning};

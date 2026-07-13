@@ -51,6 +51,12 @@ impl GlyphSize {
     }
 }
 
+impl std::fmt::Display for GlyphSize {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}×{}", self.width, self.height)
+    }
+}
+
 /// Why a [`GlyphSize`] is invalid. Each variant names the offending dimension and,
 /// where relevant, the limit it exceeded (spec/14, CLAUDE.md error-context rule).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
