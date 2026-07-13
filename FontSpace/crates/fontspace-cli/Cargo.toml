@@ -1,13 +1,23 @@
 [package]
 name = "fontspace-cli"
-description = "Command-line adapter over FontSpace's typed operations."
+description = "Command-line adapter over FontSpace's typed operations (spec/13)."
 edition.workspace = true
 version.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
+[[bin]]
+name = "fontspace"
+path = "src/main.rs"
+
 [dependencies]
+fontspace-model = { path = "../fontspace-model" }
+fontspace-json = { path = "../fontspace-json" }
+fontspace-ops = { path = "../fontspace-ops" }
+fontspace-render = { path = "../fontspace-render" }
+clap = { version = "4", features = ["derive"] }
+thiserror = "2"
 
 [dev-dependencies]
 # Auto-installs the repo-global git pre-commit hook from `.cargo-husky/hooks/`
