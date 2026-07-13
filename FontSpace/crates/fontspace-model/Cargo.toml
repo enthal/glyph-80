@@ -8,3 +8,12 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+# Typed IDs wrap UUIDs; `v4` is used only by RandomIdGen (production). Core code
+# never calls Uuid::new_v4() directly — it goes through the injected IdGen (spec/03).
+uuid = { version = "1", features = ["v4"] }
+# Structured, context-bearing error types (spec/14, CLAUDE.md "Errors identify object context").
+thiserror = "2"
+
+[dev-dependencies]
+# Property tests for the bitmap identity laws (spec/05 §5.7, spec/15).
+proptest = "1"
