@@ -135,11 +135,17 @@ impl PagesReorder {
 /// A guide changing on a page. `before = None` is an add, `after = None` a remove,
 /// both `Some` a move/edit. Guides are identified by `guide_id`; a copy to another
 /// page mints a fresh id (spec/03 §3.8), so this always concerns one guide identity.
+///
+/// `index` is the guide's position in the page's `guides` vector. On re-insert (an
+/// add, or the undo of a remove) the guide is placed **at `index`**, so inversion is
+/// exact even when a page has several guides (spec/07 §7.7) — guide order is part of
+/// document identity (it round-trips through canonical JSON).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GuideChange {
     pub glyph_set_id: GlyphSetId,
     pub page_id: PageId,
     pub guide_id: GuideId,
+    pub index: usize,
     pub before: Option<Guide>,
     pub after: Option<Guide>,
 }
@@ -150,6 +156,7 @@ impl GuideChange {
             glyph_set_id: self.glyph_set_id,
             page_id: self.page_id,
             guide_id: self.guide_id,
+            index: self.index,
             before: self.after.clone(),
             after: self.before.clone(),
         }

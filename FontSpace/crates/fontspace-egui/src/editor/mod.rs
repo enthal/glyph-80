@@ -186,6 +186,10 @@ fn guides_section(ui: &mut egui::Ui, state: &mut AppState) {
                         GuideAxis::Vertical => "V",
                     });
                     let mut position = guide.position;
+                    // NOTE: dragging records one MoveGuide per integer step (each is
+                    // a no-op-free change), so a drag spans several undo entries;
+                    // typing a value is one. Coalescing a drag into one entry is a
+                    // follow-up (like the matrix-drag interaction).
                     if ui.add(egui::DragValue::new(&mut position)).changed() {
                         moved = Some((guide.id, position));
                     }

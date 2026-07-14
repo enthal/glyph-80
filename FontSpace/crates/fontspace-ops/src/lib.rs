@@ -193,8 +193,13 @@ fn apply_guide_change(doc: &mut FontSpace, change: &GuideChange) -> Result<(), F
     let page = page_mut(glyph_set, change.glyph_set_id, change.page_id)?;
     match &change.after {
         Some(guide) => match page.guides.iter_mut().find(|g| g.id == change.guide_id) {
+            // Edit in place.
             Some(existing) => *existing = guide.clone(),
-            None => page.guides.push(guide.clone()),
+            // Re-insert at the recorded index so undo-of-remove is an exact inverse
+            // (clamped in case the vector is shorter than expected).
+            None => page
+                .guides
+                .insert(change.index.min(page.guides.len()), guide.clone()),
         },
         None => page.guides.retain(|g| g.id != change.guide_id),
     }

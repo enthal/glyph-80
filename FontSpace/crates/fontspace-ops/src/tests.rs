@@ -616,6 +616,56 @@ fn remove_guide_and_undo() {
 }
 
 #[test]
+fn remove_non_last_guide_undo_restores_order() {
+    // Exact inversion (spec/07 §7.7): removing a non-last guide and undoing must
+    // restore it at its original index, not append it.
+    let mut f = fixture();
+    let add = |f: &mut Fixture, name: &str, pos: i32| {
+        add_guide(
+            &mut f.doc,
+            &AddGuide {
+                glyph_set_id: f.glyph_set,
+                page_id: f.regular,
+                name: name.into(),
+                axis: GuideAxis::Horizontal,
+                position: pos,
+                visible: true,
+                locked: false,
+            },
+            &mut f.ids,
+        )
+        .unwrap();
+    };
+    add(&mut f, "A", 1);
+    add(&mut f, "B", 2);
+    let after_adds = f.doc.clone();
+    let first = f.doc.glyph_sets[0].pages[0].guides[0].id; // "A", index 0
+
+    let change_set = remove_guide(
+        &mut f.doc,
+        &RemoveGuide {
+            glyph_set_id: f.glyph_set,
+            page_id: f.regular,
+            guide_id: first,
+        },
+    )
+    .unwrap();
+    // Only "B" remains.
+    let names: Vec<_> = f.doc.glyph_sets[0].pages[0]
+        .guides
+        .iter()
+        .map(|g| g.name.as_str())
+        .collect();
+    assert_eq!(names, ["B"]);
+
+    undo(&mut f.doc, &change_set).unwrap();
+    assert_eq!(
+        f.doc, after_adds,
+        "undo restores the removed guide at its original index"
+    );
+}
+
+#[test]
 fn set_guide_visible_and_undo() {
     let mut f = fixture();
     add_guide(
