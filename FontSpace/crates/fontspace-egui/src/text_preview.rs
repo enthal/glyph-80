@@ -6,14 +6,12 @@
 //! The `text`→`codes` mapping is a pure function tested outside the paint closure;
 //! glyph painting reuses the editor's [`MatrixGeometry`].
 
-use egui::{Color32, CornerRadius, Sense, Vec2};
+use egui::{Sense, Vec2};
 use fontspace_model::{Bitmap, CharacterSet, GlyphSize};
 
-use crate::editor::geometry::MatrixGeometry;
+use crate::glyph_paint::paint_bitmap;
 use crate::state::AppState;
 
-const CELL_OFF: Color32 = Color32::from_gray(24);
-const CELL_ON: Color32 = Color32::from_gray(230);
 /// Pixels per glyph pixel in the preview.
 const SCALE: f32 = 4.0;
 
@@ -63,22 +61,11 @@ pub fn show_text_preview(ui: &mut egui::Ui, state: &mut AppState) {
         });
 }
 
-/// Paints one glyph cell at the preview scale, returning its allocated space.
+/// Paints one glyph cell at the preview scale.
 fn paint_glyph(ui: &mut egui::Ui, bitmap: Option<&Bitmap>, size: GlyphSize) {
     let extent = Vec2::new(size.width as f32 * SCALE, size.height as f32 * SCALE);
     let (rect, _response) = ui.allocate_exact_size(extent, Sense::hover());
-    let painter = ui.painter_at(rect);
-    painter.rect_filled(rect, CornerRadius::ZERO, CELL_OFF);
-    if let Some(bitmap) = bitmap {
-        let geom = MatrixGeometry::fit(rect, size);
-        for y in 0..size.height {
-            for x in 0..size.width {
-                if bitmap.get(x, y).unwrap_or(false) {
-                    painter.rect_filled(geom.cell_rect(x, y), CornerRadius::ZERO, CELL_ON);
-                }
-            }
-        }
-    }
+    paint_bitmap(&ui.painter_at(rect), rect, bitmap, size);
 }
 
 #[cfg(test)]

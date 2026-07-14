@@ -9,13 +9,11 @@
 use egui::{Align2, Color32, CornerRadius, FontId, Rect, Sense, Stroke, Vec2};
 use fontspace_model::{Bitmap, CharacterSet, GlyphPage, GlyphSize};
 
-use crate::editor::geometry::MatrixGeometry;
+use crate::glyph_paint::paint_bitmap;
 use crate::state::AppState;
 
 const THUMB: f32 = 40.0;
 const LABEL_H: f32 = 16.0;
-const CELL_OFF: Color32 = Color32::from_gray(24);
-const CELL_ON: Color32 = Color32::from_gray(230);
 const SELECTED: Color32 = Color32::from_rgb(255, 200, 60);
 const DANGLING: Color32 = Color32::from_rgb(230, 110, 90);
 
@@ -125,17 +123,7 @@ fn thumbnail(
 
     // Glyph square at the top of the cell.
     let square = Rect::from_min_size(rect.min, Vec2::splat(THUMB));
-    painter.rect_filled(square, CornerRadius::ZERO, CELL_OFF);
-    if let Some(bitmap) = bitmap {
-        let geom = MatrixGeometry::fit(square, size);
-        for y in 0..size.height {
-            for x in 0..size.width {
-                if bitmap.get(x, y).unwrap_or(false) {
-                    painter.rect_filled(geom.cell_rect(x, y), CornerRadius::ZERO, CELL_ON);
-                }
-            }
-        }
-    }
+    paint_bitmap(&painter, square, bitmap, size);
 
     // Code label below; dangling codes are tinted as a warning.
     let label_color = if entry.in_character_set {

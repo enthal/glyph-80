@@ -14,6 +14,7 @@
 pub mod app;
 pub mod charset_view;
 pub mod editor;
+pub mod glyph_paint;
 pub mod layout;
 pub mod page_overview;
 pub mod state;

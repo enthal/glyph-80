@@ -14,11 +14,10 @@ use egui::{
 };
 use fontspace_model::{GuideAxis, GuideId};
 
+use crate::glyph_paint::paint_bitmap;
 use crate::state::AppState;
 use geometry::{GridLevel, MatrixGeometry};
 
-const CELL_OFF: Color32 = Color32::from_gray(24);
-const CELL_ON: Color32 = Color32::from_gray(230);
 const GRID_SUBTLE: Color32 = Color32::from_gray(64);
 const GRID_STRONG: Color32 = Color32::from_gray(110);
 const GUIDE: Color32 = Color32::from_rgb(80, 160, 240);
@@ -60,17 +59,8 @@ pub fn show_glyph_editor(ui: &mut egui::Ui, state: &mut AppState) {
     let painter = ui.painter_at(rect);
     let matrix = geom.matrix_rect();
 
-    // Cells: matrix background, then committed on-pixels.
-    painter.rect_filled(matrix, CornerRadius::ZERO, CELL_OFF);
-    if let Some(bitmap) = state.selected_bitmap() {
-        for y in 0..size.height {
-            for x in 0..size.width {
-                if bitmap.get(x, y).unwrap_or(false) {
-                    painter.rect_filled(geom.cell_rect(x, y), CornerRadius::ZERO, CELL_ON);
-                }
-            }
-        }
-    }
+    // Cells: matrix background + committed on-pixels (shared with the other views).
+    paint_bitmap(&painter, matrix, state.selected_bitmap(), size);
 
     // Live tentative stroke, drawn over the committed pixels before commit.
     if let Some(active) = state.active_stroke() {
