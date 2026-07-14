@@ -61,6 +61,12 @@ impl AppState {
         }
     }
 
+    /// Points the selection at `code` within the current glyph set and page (e.g.
+    /// from clicking a page-overview thumbnail).
+    pub fn select_code(&mut self, code: u32) {
+        self.selection.code = code;
+    }
+
     /// The current value of pixel `(x, y)` on the selected glyph (`false` if the
     /// glyph is absent/blank or the coordinate is out of bounds).
     pub fn selected_pixel(&self, x: u16, y: u16) -> bool {

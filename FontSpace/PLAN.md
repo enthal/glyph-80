@@ -52,7 +52,9 @@ Steps:
 - [x] **Glyph editor widget** — square-cell layout math, grid levels, guides overlay, hover; **pure** cell-size/hover/guide functions with unit tests ([spec/12](spec/12-gui.md) §12.3). — [#16](https://github.com/enthal/glyph-80/pull/16) *(display only; the stroke/interpolation pure functions land with the editing slice below, §12.4)*
 - [x] **First-pixel-determines-stroke** editing → one `SetPixels` per drag → one undo entry; live tentative stroke. — [#17](https://github.com/enthal/glyph-80/pull/17)
 - [x] Undo/redo (workspace-level stack, single doc for now) ([spec/07](spec/07-operations.md)). — [#17](https://github.com/enthal/glyph-80/pull/17)
-- [ ] Page overview; character-set view (with pre-apply impact for remove/recode); guides UI.
+- [x] Page overview — thumbnail grid, click-to-select, absent-blank, dangling flagged ([spec/12](spec/12-gui.md) §12.8). — [#18](https://github.com/enthal/glyph-80/pull/18)
+- [ ] Character-set view (ordered table, with pre-apply impact for remove/recode) ([spec/12](spec/12-gui.md) §12.7).
+- [ ] Guides UI (add/edit/drag/show-hide/copy-to-pages) ([spec/12](spec/12-gui.md) §12.6).
 - [ ] Text preview (image render) ([spec/09](spec/09-rendering.md)).
 - [ ] Open/Save/Save As/Revert with atomic writes; dirty tracking.
 - [ ] **Platform identity + Linux desktop integration** ([spec/18](spec/18-platform-support.md)): `APP_ID`/storage-namespace constants, embedded `assets/app_icon.png` → window icon, `with_app_id`, the self-installing `.desktop`+icon (Exec-resolves / AppImage / `StartupWMClass` / `update-desktop-database`), and the `cursor_env` re-exec bridge. Port Termica's pure helpers (`desktop_entry_contents`, `desktop_exec_field`, `resolve_exec_path`) with their unit tests, plus the `APP_ID == packager identifier` test.
