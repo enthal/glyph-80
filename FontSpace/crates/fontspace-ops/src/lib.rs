@@ -38,7 +38,8 @@ pub use glyph_ops::{
     invert_glyphs, set_pixels, shift_glyphs,
 };
 pub use guide_ops::{
-    AddGuide, CopyGuideToPages, MoveGuide, add_guide, copy_guide_to_pages, move_guide,
+    AddGuide, CopyGuideToPages, MoveGuide, RemoveGuide, SetGuideVisible, add_guide,
+    copy_guide_to_pages, move_guide, remove_guide, set_guide_visible,
 };
 pub use page_ops::{AddPage, RemovePages, ReorderPages, add_page, remove_pages, reorder_pages};
 pub use selector::{GlyphSelector, PageSelector, resolve_glyph_codes_in, resolve_pages_in};
@@ -192,8 +193,13 @@ fn apply_guide_change(doc: &mut FontSpace, change: &GuideChange) -> Result<(), F
     let page = page_mut(glyph_set, change.glyph_set_id, change.page_id)?;
     match &change.after {
         Some(guide) => match page.guides.iter_mut().find(|g| g.id == change.guide_id) {
+            // Edit in place.
             Some(existing) => *existing = guide.clone(),
-            None => page.guides.push(guide.clone()),
+            // Re-insert at the recorded index so undo-of-remove is an exact inverse
+            // (clamped in case the vector is shorter than expected).
+            None => page
+                .guides
+                .insert(change.index.min(page.guides.len()), guide.clone()),
         },
         None => page.guides.retain(|g| g.id != change.guide_id),
     }

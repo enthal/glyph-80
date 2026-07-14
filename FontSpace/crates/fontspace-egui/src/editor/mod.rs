@@ -12,6 +12,7 @@ pub mod stroke;
 use egui::{
     Align2, Color32, CornerRadius, FontId, Rangef, Sense, Stroke as EguiStroke, StrokeKind,
 };
+use fontspace_model::{GuideAxis, GuideId};
 
 use crate::state::AppState;
 use geometry::{GridLevel, MatrixGeometry};
@@ -47,6 +48,8 @@ pub fn show_glyph_editor(ui: &mut egui::Ui, state: &mut AppState) {
         }
     });
     ui.separator();
+
+    guides_section(ui, state);
 
     // Body: the painted matrix fills the remaining space and takes pointer input.
     let (rect, response) = ui.allocate_exact_size(ui.available_size(), Sense::click_and_drag());
@@ -140,6 +143,73 @@ pub fn show_glyph_editor(ui: &mut egui::Ui, state: &mut AppState) {
             FontId::monospace(12.0),
             HOVER,
         );
+    }
+}
+
+/// A collapsing "Guides" section for the selected page (spec/12 §12.6): add
+/// horizontal/vertical guides, show/hide, edit position, and remove. Guide edits go
+/// through `fontspace-ops` and are individually undoable. (Dragging guides on the
+/// matrix and rename/lock/copy-to-pages are follow-ups.)
+fn guides_section(ui: &mut egui::Ui, state: &mut AppState) {
+    let mut add_axis: Option<GuideAxis> = None;
+    let mut toggle: Option<(GuideId, bool)> = None;
+    let mut moved: Option<(GuideId, i32)> = None;
+    let mut remove: Option<GuideId> = None;
+
+    egui::CollapsingHeader::new("Guides")
+        .id_salt(ui.id().with("guides"))
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                if ui.button("Add horizontal").clicked() {
+                    add_axis = Some(GuideAxis::Horizontal);
+                }
+                if ui.button("Add vertical").clicked() {
+                    add_axis = Some(GuideAxis::Vertical);
+                }
+            });
+
+            let Some((_, page)) = state.selected_context() else {
+                return;
+            };
+            if page.guides.is_empty() {
+                ui.weak("No guides on this page.");
+                return;
+            }
+            for guide in &page.guides {
+                ui.horizontal(|ui| {
+                    let mut visible = guide.visible;
+                    if ui.checkbox(&mut visible, "").changed() {
+                        toggle = Some((guide.id, visible));
+                    }
+                    ui.label(match guide.axis {
+                        GuideAxis::Horizontal => "H",
+                        GuideAxis::Vertical => "V",
+                    });
+                    let mut position = guide.position;
+                    // NOTE: dragging records one MoveGuide per integer step (each is
+                    // a no-op-free change), so a drag spans several undo entries;
+                    // typing a value is one. Coalescing a drag into one entry is a
+                    // follow-up (like the matrix-drag interaction).
+                    if ui.add(egui::DragValue::new(&mut position)).changed() {
+                        moved = Some((guide.id, position));
+                    }
+                    ui.label(&guide.name);
+                    if ui.small_button("Remove").clicked() {
+                        remove = Some(guide.id);
+                    }
+                });
+            }
+        });
+
+    // Apply after the immutable borrow of the page ends. At most one fires per frame.
+    if let Some(axis) = add_axis {
+        state.add_guide(axis);
+    } else if let Some((id, visible)) = toggle {
+        state.set_guide_visible(id, visible);
+    } else if let Some((id, position)) = moved {
+        state.move_guide(id, position);
+    } else if let Some(id) = remove {
+        state.remove_guide(id);
     }
 }
 

@@ -10,10 +10,11 @@ use proptest::prelude::*;
 use crate::{
     AddCharacterEntry, AddGuide, AddPage, ClearGlyphs, CopyGuideToPages, FontSpaceError,
     FontSpaceWarning, GlyphRef, GlyphSelector, InvertGlyphs, MoveGuide, PageSelector, PixelEdit,
-    RecodeCharacterEntry, RemoveCharacterEntry, RemovePages, ReorderCharacterEntries, ReorderPages,
-    SetPixels, ShiftGlyphs, add_character_entry, add_guide, add_page, clear_glyphs,
-    copy_guide_to_pages, invert_glyphs, move_guide, recode_character_entry, remove_character_entry,
-    remove_pages, reorder_character_entries, reorder_pages, set_pixels, shift_glyphs, undo,
+    RecodeCharacterEntry, RemoveCharacterEntry, RemoveGuide, RemovePages, ReorderCharacterEntries,
+    ReorderPages, SetGuideVisible, SetPixels, ShiftGlyphs, add_character_entry, add_guide,
+    add_page, clear_glyphs, copy_guide_to_pages, invert_glyphs, move_guide, recode_character_entry,
+    remove_character_entry, remove_guide, remove_pages, reorder_character_entries, reorder_pages,
+    set_guide_visible, set_pixels, shift_glyphs, undo,
 };
 
 struct Fixture {
@@ -578,6 +579,138 @@ fn add_guide_and_undo() {
     assert_eq!(f.doc.glyph_sets[0].pages[0].guides.len(), 1);
     undo(&mut f.doc, &change_set).unwrap();
     assert_eq!(f.doc, before, "undo of add_guide removes the guide");
+}
+
+#[test]
+fn remove_guide_and_undo() {
+    let mut f = fixture();
+    add_guide(
+        &mut f.doc,
+        &AddGuide {
+            glyph_set_id: f.glyph_set,
+            page_id: f.regular,
+            name: "Baseline".into(),
+            axis: GuideAxis::Horizontal,
+            position: 6,
+            visible: true,
+            locked: false,
+        },
+        &mut f.ids,
+    )
+    .unwrap();
+    let guide_id = f.doc.glyph_sets[0].pages[0].guides[0].id;
+    let after_add = f.doc.clone();
+
+    let change_set = remove_guide(
+        &mut f.doc,
+        &RemoveGuide {
+            glyph_set_id: f.glyph_set,
+            page_id: f.regular,
+            guide_id,
+        },
+    )
+    .unwrap();
+    assert!(f.doc.glyph_sets[0].pages[0].guides.is_empty());
+    undo(&mut f.doc, &change_set).unwrap();
+    assert_eq!(f.doc, after_add, "undo of remove_guide restores the guide");
+}
+
+#[test]
+fn remove_non_last_guide_undo_restores_order() {
+    // Exact inversion (spec/07 §7.7): removing a non-last guide and undoing must
+    // restore it at its original index, not append it.
+    let mut f = fixture();
+    let add = |f: &mut Fixture, name: &str, pos: i32| {
+        add_guide(
+            &mut f.doc,
+            &AddGuide {
+                glyph_set_id: f.glyph_set,
+                page_id: f.regular,
+                name: name.into(),
+                axis: GuideAxis::Horizontal,
+                position: pos,
+                visible: true,
+                locked: false,
+            },
+            &mut f.ids,
+        )
+        .unwrap();
+    };
+    add(&mut f, "A", 1);
+    add(&mut f, "B", 2);
+    let after_adds = f.doc.clone();
+    let first = f.doc.glyph_sets[0].pages[0].guides[0].id; // "A", index 0
+
+    let change_set = remove_guide(
+        &mut f.doc,
+        &RemoveGuide {
+            glyph_set_id: f.glyph_set,
+            page_id: f.regular,
+            guide_id: first,
+        },
+    )
+    .unwrap();
+    // Only "B" remains.
+    let names: Vec<_> = f.doc.glyph_sets[0].pages[0]
+        .guides
+        .iter()
+        .map(|g| g.name.as_str())
+        .collect();
+    assert_eq!(names, ["B"]);
+
+    undo(&mut f.doc, &change_set).unwrap();
+    assert_eq!(
+        f.doc, after_adds,
+        "undo restores the removed guide at its original index"
+    );
+}
+
+#[test]
+fn set_guide_visible_and_undo() {
+    let mut f = fixture();
+    add_guide(
+        &mut f.doc,
+        &AddGuide {
+            glyph_set_id: f.glyph_set,
+            page_id: f.regular,
+            name: "Baseline".into(),
+            axis: GuideAxis::Horizontal,
+            position: 6,
+            visible: true,
+            locked: false,
+        },
+        &mut f.ids,
+    )
+    .unwrap();
+    let guide_id = f.doc.glyph_sets[0].pages[0].guides[0].id;
+    let after_add = f.doc.clone();
+
+    let change_set = set_guide_visible(
+        &mut f.doc,
+        &SetGuideVisible {
+            glyph_set_id: f.glyph_set,
+            page_id: f.regular,
+            guide_id,
+            visible: false,
+        },
+    )
+    .unwrap();
+    assert!(!f.doc.glyph_sets[0].pages[0].guides[0].visible);
+    undo(&mut f.doc, &change_set).unwrap();
+    assert_eq!(f.doc, after_add, "undo restores visibility");
+
+    // Setting to the current value is a no-op change set.
+    let noop = set_guide_visible(
+        &mut f.doc,
+        &SetGuideVisible {
+            glyph_set_id: f.glyph_set,
+            page_id: f.regular,
+            guide_id,
+            visible: true,
+        },
+    )
+    .unwrap();
+    assert!(noop.is_empty());
 }
 
 #[test]

@@ -1,5 +1,7 @@
-//! Guide operations (spec/07 §7.2): add, move, and copy-to-pages. Copying mints a
-//! fresh `GuideId` per target page so ids never collide across pages (spec/03 §3.8).
+//! Guide operations (spec/07 §7.2): add, move, remove, set-visible, and
+//! copy-to-pages. Every guide change carries the guide's index so remove's inverse
+//! re-inserts at its position (spec/07 §7.7). Copying mints a fresh `GuideId` per
+//! target page so ids never collide across pages (spec/03 §3.8).
 
 use fontspace_model::{FontSpace, GlyphSetId, Guide, GuideAxis, GuideId, IdGen, PageId};
 
@@ -29,6 +31,24 @@ pub struct MoveGuide {
     pub position: i32,
 }
 
+/// Remove a guide from a page. Invertible: undo re-inserts the same guide (spec/07
+/// §7.7).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RemoveGuide {
+    pub glyph_set_id: GlyphSetId,
+    pub page_id: PageId,
+    pub guide_id: GuideId,
+}
+
+/// Set a guide's visibility (show/hide). A no-op if already in that state.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SetGuideVisible {
+    pub glyph_set_id: GlyphSetId,
+    pub page_id: PageId,
+    pub guide_id: GuideId,
+    pub visible: bool,
+}
+
 /// Copy one guide onto other pages, minting a fresh id on each target (the source
 /// page is skipped). Guide identity never collides across pages (spec/03 §3.8).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -39,23 +59,24 @@ pub struct CopyGuideToPages {
     pub target_pages: PageSelector,
 }
 
-/// Applies `AddGuide`.
+/// Applies `AddGuide`. The guide is appended, so its index is the current count.
 pub fn add_guide(
     doc: &mut FontSpace,
     req: &AddGuide,
     ids: &mut dyn IdGen,
 ) -> Result<ChangeSet, FontSpaceError> {
-    {
+    let index = {
         let glyph_set = doc
             .glyph_set(req.glyph_set_id)
             .ok_or(FontSpaceError::GlyphSetNotFound(req.glyph_set_id))?;
-        if glyph_set.page_of_id(req.page_id).is_none() {
-            return Err(FontSpaceError::PageIdNotFound {
+        let page = glyph_set
+            .page_of_id(req.page_id)
+            .ok_or(FontSpaceError::PageIdNotFound {
                 glyph_set: req.glyph_set_id,
                 page: req.page_id,
-            });
-        }
-    }
+            })?;
+        page.guides.len()
+    };
     let guide = Guide {
         id: GuideId::new(ids),
         name: req.name.clone(),
@@ -69,6 +90,7 @@ pub fn add_guide(
             glyph_set_id: req.glyph_set_id,
             page_id: req.page_id,
             guide_id: guide.id,
+            index,
             before: None,
             after: Some(guide),
         })],
@@ -81,7 +103,7 @@ pub fn add_guide(
 /// Applies `MoveGuide`.
 pub fn move_guide(doc: &mut FontSpace, req: &MoveGuide) -> Result<ChangeSet, FontSpaceError> {
     let change = {
-        let guide = find_guide(doc, req.glyph_set_id, req.page_id, req.guide_id)?;
+        let (index, guide) = find_guide(doc, req.glyph_set_id, req.page_id, req.guide_id)?;
         if guide.position == req.position {
             return Ok(ChangeSet::default());
         }
@@ -92,6 +114,56 @@ pub fn move_guide(doc: &mut FontSpace, req: &MoveGuide) -> Result<ChangeSet, Fon
             glyph_set_id: req.glyph_set_id,
             page_id: req.page_id,
             guide_id: req.guide_id,
+            index,
+            before: Some(before),
+            after: Some(after),
+        })
+    };
+    let change_set = ChangeSet {
+        object_changes: vec![change],
+        warnings: Vec::new(),
+    };
+    apply_change_set(doc, &change_set)?;
+    Ok(change_set)
+}
+
+/// Applies `RemoveGuide`.
+pub fn remove_guide(doc: &mut FontSpace, req: &RemoveGuide) -> Result<ChangeSet, FontSpaceError> {
+    let (index, guide) = find_guide(doc, req.glyph_set_id, req.page_id, req.guide_id)?;
+    let before = guide.clone();
+    let change_set = ChangeSet {
+        object_changes: vec![ObjectChange::GuideChanged(GuideChange {
+            glyph_set_id: req.glyph_set_id,
+            page_id: req.page_id,
+            guide_id: req.guide_id,
+            index,
+            before: Some(before),
+            after: None,
+        })],
+        warnings: Vec::new(),
+    };
+    apply_change_set(doc, &change_set)?;
+    Ok(change_set)
+}
+
+/// Applies `SetGuideVisible`.
+pub fn set_guide_visible(
+    doc: &mut FontSpace,
+    req: &SetGuideVisible,
+) -> Result<ChangeSet, FontSpaceError> {
+    let change = {
+        let (index, guide) = find_guide(doc, req.glyph_set_id, req.page_id, req.guide_id)?;
+        if guide.visible == req.visible {
+            return Ok(ChangeSet::default());
+        }
+        let before = guide.clone();
+        let mut after = guide.clone();
+        after.visible = req.visible;
+        ObjectChange::GuideChanged(GuideChange {
+            glyph_set_id: req.glyph_set_id,
+            page_id: req.page_id,
+            guide_id: req.guide_id,
+            index,
             before: Some(before),
             after: Some(after),
         })
@@ -110,18 +182,28 @@ pub fn copy_guide_to_pages(
     req: &CopyGuideToPages,
     ids: &mut dyn IdGen,
 ) -> Result<ChangeSet, FontSpaceError> {
-    let source = find_guide(doc, req.glyph_set_id, req.source_page_id, req.guide_id)?.clone();
+    let source = find_guide(doc, req.glyph_set_id, req.source_page_id, req.guide_id)?
+        .1
+        .clone();
     let target_page_ids = {
         let glyph_set = doc
             .glyph_set(req.glyph_set_id)
             .ok_or(FontSpaceError::GlyphSetNotFound(req.glyph_set_id))?;
         resolve_pages(glyph_set, &req.target_pages)?
     };
+    let glyph_set = doc
+        .glyph_set(req.glyph_set_id)
+        .ok_or(FontSpaceError::GlyphSetNotFound(req.glyph_set_id))?;
     let mut object_changes = Vec::new();
     for page_id in target_page_ids {
         if page_id == req.source_page_id {
             continue; // copying onto the source page would just duplicate it
         }
+        // Each copy is appended to its target page, so its index is that page's
+        // current guide count (each target page is distinct, so this is stable).
+        let index = glyph_set
+            .page_of_id(page_id)
+            .map_or(0, |page| page.guides.len());
         let copy = Guide {
             id: GuideId::new(ids),
             name: source.name.clone(),
@@ -134,6 +216,7 @@ pub fn copy_guide_to_pages(
             glyph_set_id: req.glyph_set_id,
             page_id,
             guide_id: copy.id,
+            index,
             before: None,
             after: Some(copy),
         }));
@@ -146,12 +229,13 @@ pub fn copy_guide_to_pages(
     Ok(change_set)
 }
 
+/// Finds a guide and its index within the page's `guides` vector.
 fn find_guide(
     doc: &FontSpace,
     glyph_set_id: GlyphSetId,
     page_id: PageId,
     guide_id: GuideId,
-) -> Result<&Guide, FontSpaceError> {
+) -> Result<(usize, &Guide), FontSpaceError> {
     let glyph_set = doc
         .glyph_set(glyph_set_id)
         .ok_or(FontSpaceError::GlyphSetNotFound(glyph_set_id))?;
@@ -163,7 +247,8 @@ fn find_guide(
         })?;
     page.guides
         .iter()
-        .find(|guide| guide.id == guide_id)
+        .enumerate()
+        .find(|(_, guide)| guide.id == guide_id)
         .ok_or(FontSpaceError::GuideNotFound {
             glyph_set: glyph_set_id,
             page: page_id,

@@ -54,7 +54,7 @@ Steps:
 - [x] Undo/redo (workspace-level stack, single doc for now) ([spec/07](spec/07-operations.md)). — [#17](https://github.com/enthal/glyph-80/pull/17)
 - [x] Page overview — thumbnail grid, click-to-select, absent-blank, dangling flagged ([spec/12](spec/12-gui.md) §12.8). — [#18](https://github.com/enthal/glyph-80/pull/18)
 - [x] Character-set view — ordered table, click-select, and **pre-apply cascade impact for remove** ([spec/12](spec/12-gui.md) §12.7). — [#19](https://github.com/enthal/glyph-80/pull/19) *(recode-impact, add/reorder, ASCII preset are a follow-up)*
-- [ ] Guides UI (add/edit/drag/show-hide/copy-to-pages) ([spec/12](spec/12-gui.md) §12.6).
+- [x] Guides UI — add H/V, show/hide, edit position, remove (undoable, via new `remove_guide`/`set_guide_visible` ops) ([spec/12](spec/12-gui.md) §12.6). — [#20](https://github.com/enthal/glyph-80/pull/20) *(drag-on-matrix, rename/lock, copy-to-pages are follow-ups)*
 - [ ] Text preview (image render) ([spec/09](spec/09-rendering.md)).
 - [ ] Open/Save/Save As/Revert with atomic writes; dirty tracking.
 - [ ] **Platform identity + Linux desktop integration** ([spec/18](spec/18-platform-support.md)): `APP_ID`/storage-namespace constants, embedded `assets/app_icon.png` → window icon, `with_app_id`, the self-installing `.desktop`+icon (Exec-resolves / AppImage / `StartupWMClass` / `update-desktop-database`), and the `cursor_env` re-exec bridge. Port Termica's pure helpers (`desktop_entry_contents`, `desktop_exec_field`, `resolve_exec_path`) with their unit tests, plus the `APP_ID == packager identifier` test.

@@ -32,6 +32,8 @@ pub enum FontCommand {
     ReorderPages(ReorderPages),
     AddGuide(AddGuide),
     MoveGuide(MoveGuide),
+    RemoveGuide(RemoveGuide),
+    SetGuideVisible(SetGuideVisible),
     CopyGuideToPages(CopyGuideToPages),
     AddCharacterEntry(AddCharacterEntry),
     RemoveCharacterEntry(RemoveCharacterEntry),   // cascade-deletes referencing glyphs
@@ -128,7 +130,7 @@ pub enum ObjectChange {
     PageInserted(PageInserted),
     PageRemoved(PageRemoved),
     PagesReordered(PagesReorder),     // before/after page-id order; inverse swaps them
-    GuideChanged(GuideChange),
+    GuideChanged(GuideChange),        // add/move/edit/remove; carries the guide's index so remove's inverse re-inserts at its position
     CharacterSetChanged(CharacterSetChange),
     ExportConfigChanged(ExportConfigChange),
 }
