@@ -14,9 +14,11 @@
 pub mod app;
 pub mod charset_view;
 pub mod editor;
+pub mod glyph_paint;
 pub mod layout;
 pub mod page_overview;
 pub mod state;
+pub mod text_preview;
 
 pub use app::FontSpaceApp;
 pub use layout::{Pane, default_tree, panes_in};
