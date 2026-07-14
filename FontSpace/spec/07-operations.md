@@ -32,6 +32,8 @@ pub enum FontCommand {
     ReorderPages(ReorderPages),
     AddGuide(AddGuide),
     MoveGuide(MoveGuide),
+    RemoveGuide(RemoveGuide),
+    SetGuideVisible(SetGuideVisible),
     CopyGuideToPages(CopyGuideToPages),
     AddCharacterEntry(AddCharacterEntry),
     RemoveCharacterEntry(RemoveCharacterEntry),   // cascade-deletes referencing glyphs

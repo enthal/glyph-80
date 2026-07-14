@@ -8,11 +8,12 @@
 
 use fontspace_model::{
     Bitmap, CharacterEntry, CharacterSet, CharacterSetId, FontSpace, Glyph, GlyphPage, GlyphSet,
-    GlyphSetId, GlyphSize, Guide, GuideAxis, IdGen, PageId, RandomIdGen,
+    GlyphSetId, GlyphSize, Guide, GuideAxis, GuideId, IdGen, PageId, RandomIdGen,
 };
 use fontspace_ops::{
-    ChangeSet, FontSpaceWarning, GlyphRef, RemoveCharacterEntry, SetPixels, apply_change_set,
-    remove_character_entry, set_pixels, undo,
+    AddGuide, ChangeSet, FontSpaceWarning, GlyphRef, MoveGuide, RemoveCharacterEntry, RemoveGuide,
+    SetGuideVisible, SetPixels, add_guide, apply_change_set, move_guide, remove_character_entry,
+    remove_guide, set_guide_visible, set_pixels, undo,
 };
 
 use crate::editor::geometry::GridLevel;
@@ -127,6 +128,73 @@ impl AppState {
         {
             self.undo_stack.push(change_set);
             self.redo_stack.clear();
+        }
+    }
+
+    /// Records a committed change on the undo stack (clearing redo), skipping an
+    /// empty (no-op) change set. The single place edits enter the history.
+    fn record(&mut self, change_set: ChangeSet) {
+        if !change_set.is_empty() {
+            self.undo_stack.push(change_set);
+            self.redo_stack.clear();
+        }
+    }
+
+    /// Adds a guide of `axis` to the selected page as one undo entry (spec/12 §12.6).
+    pub fn add_guide(&mut self, axis: GuideAxis) {
+        let name = match axis {
+            GuideAxis::Horizontal => "h-guide",
+            GuideAxis::Vertical => "v-guide",
+        };
+        let request = AddGuide {
+            glyph_set_id: self.selection.glyph_set_id,
+            page_id: self.selection.page_id,
+            name: name.to_string(),
+            axis,
+            position: 0,
+            visible: true,
+            locked: false,
+        };
+        if let Ok(change_set) = add_guide(&mut self.document, &request, self.ids.as_mut()) {
+            self.record(change_set);
+        }
+    }
+
+    /// Removes a guide from the selected page as one undo entry (spec/12 §12.6).
+    pub fn remove_guide(&mut self, guide_id: GuideId) {
+        let request = RemoveGuide {
+            glyph_set_id: self.selection.glyph_set_id,
+            page_id: self.selection.page_id,
+            guide_id,
+        };
+        if let Ok(change_set) = remove_guide(&mut self.document, &request) {
+            self.record(change_set);
+        }
+    }
+
+    /// Shows/hides a guide as one undo entry (spec/12 §12.6).
+    pub fn set_guide_visible(&mut self, guide_id: GuideId, visible: bool) {
+        let request = SetGuideVisible {
+            glyph_set_id: self.selection.glyph_set_id,
+            page_id: self.selection.page_id,
+            guide_id,
+            visible,
+        };
+        if let Ok(change_set) = set_guide_visible(&mut self.document, &request) {
+            self.record(change_set);
+        }
+    }
+
+    /// Moves a guide to `position` (a grid-line coordinate) as one undo entry.
+    pub fn move_guide(&mut self, guide_id: GuideId, position: i32) {
+        let request = MoveGuide {
+            glyph_set_id: self.selection.glyph_set_id,
+            page_id: self.selection.page_id,
+            guide_id,
+            position,
+        };
+        if let Ok(change_set) = move_guide(&mut self.document, &request) {
+            self.record(change_set);
         }
     }
 
@@ -447,6 +515,39 @@ mod tests {
         assert_eq!(state.undo_stack.len(), 1);
         state.undo();
         assert!(state.selected_character_set().unwrap().contains_code(0x42));
+    }
+
+    fn baseline_guide_id(state: &AppState) -> GuideId {
+        state.selected_context().unwrap().1.guides[0].id
+    }
+
+    #[test]
+    fn add_and_remove_guide_are_each_one_undo_entry() {
+        let mut state = editable_state();
+        // The starter page has one baseline guide.
+        assert_eq!(state.selected_context().unwrap().1.guides.len(), 1);
+        state.add_guide(GuideAxis::Vertical);
+        assert_eq!(state.selected_context().unwrap().1.guides.len(), 2);
+        assert_eq!(state.undo_stack.len(), 1);
+        state.undo();
+        assert_eq!(state.selected_context().unwrap().1.guides.len(), 1);
+
+        let baseline = baseline_guide_id(&state);
+        state.remove_guide(baseline);
+        assert!(state.selected_context().unwrap().1.guides.is_empty());
+        state.undo();
+        assert_eq!(state.selected_context().unwrap().1.guides.len(), 1);
+    }
+
+    #[test]
+    fn toggle_guide_visibility_is_undoable() {
+        let mut state = editable_state();
+        let baseline = baseline_guide_id(&state);
+        assert!(state.selected_context().unwrap().1.guides[0].visible);
+        state.set_guide_visible(baseline, false);
+        assert!(!state.selected_context().unwrap().1.guides[0].visible);
+        state.undo();
+        assert!(state.selected_context().unwrap().1.guides[0].visible);
     }
 
     #[test]
