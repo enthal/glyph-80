@@ -34,7 +34,9 @@ fn control_notation(code: u32) -> Option<&'static str> {
 }
 
 /// Maps a `code` to its table display: the Unicode scalar as a character when it is
-/// not a control character, plus a control notation for C0/DEL codes.
+/// not a control character, plus a control notation for C0/DEL codes. Codes with
+/// neither (C1 controls `0x80..=0x9F`, and non-scalar values) show a blank cell —
+/// only the C0/DEL names are given here.
 pub fn describe_code(code: u32) -> CodeDisplay {
     CodeDisplay {
         glyph: char::from_u32(code).filter(|c| !c.is_control()),
@@ -45,10 +47,9 @@ pub fn describe_code(code: u32) -> CodeDisplay {
 /// Renders the character-set view, applying row-selection and entry removal.
 pub fn show_character_set(ui: &mut egui::Ui, state: &mut AppState) {
     let selected_code = state.selection.code;
-    // Impact of a pending remove is computed on a clone, so it is safe to read here.
-    let pending = state
-        .pending_remove()
-        .map(|code| (code, state.preview_remove_cascade(code)));
+    // The pending remove's impact is computed against its armed target on a clone,
+    // so it is safe (and consistent with what confirm will delete) to read here.
+    let pending = state.pending_remove_impact();
 
     let mut select: Option<u32> = None;
     let mut request_remove: Option<u32> = None;

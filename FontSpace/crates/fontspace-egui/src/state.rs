@@ -41,8 +41,9 @@ pub struct AppState {
     undo_stack: Vec<ChangeSet>,
     redo_stack: Vec<ChangeSet>,
     /// A character-set entry the user has asked to remove, awaiting confirmation of
-    /// its cascade impact (spec/12 §12.7).
-    pending_remove: Option<u32>,
+    /// its cascade impact (spec/12 §12.7). Stored as a resolved `(set, code)` target
+    /// so a later selection change can't retarget the confirm.
+    pending_remove: Option<(CharacterSetId, u32)>,
 }
 
 impl Default for AppState {
@@ -190,13 +191,10 @@ impl AppState {
         )
     }
 
-    /// How many glyphs removing `code` from the selected character set would
-    /// cascade-delete (spec/12 §12.7 pre-apply impact, spec/07 §7.8). Computed by
-    /// dry-running the op on a clone, so the real document is untouched.
-    pub fn preview_remove_cascade(&self, code: u32) -> usize {
-        let Some(character_set_id) = self.selected_character_set_id() else {
-            return 0;
-        };
+    /// How many glyphs removing `code` from character set `character_set_id` would
+    /// cascade-delete (spec/07 §7.8). Computed by dry-running the op on a clone, so
+    /// the real document is untouched.
+    fn remove_cascade_count(&self, character_set_id: CharacterSetId, code: u32) -> usize {
         let mut preview = self.document.clone();
         let Ok(change_set) = remove_character_entry(
             &mut preview,
@@ -217,14 +215,32 @@ impl AppState {
             .sum()
     }
 
-    /// The entry code awaiting remove-confirmation, if any (spec/12 §12.7).
-    pub fn pending_remove(&self) -> Option<u32> {
-        self.pending_remove
+    /// How many glyphs removing `code` from the *selected* character set would
+    /// cascade-delete (spec/12 §12.7 pre-apply impact).
+    pub fn preview_remove_cascade(&self, code: u32) -> usize {
+        self.selected_character_set_id()
+            .map_or(0, |id| self.remove_cascade_count(id, code))
     }
 
-    /// Asks to remove `code`, arming the impact confirmation.
+    /// The entry code awaiting remove-confirmation, if any (spec/12 §12.7).
+    pub fn pending_remove(&self) -> Option<u32> {
+        self.pending_remove.map(|(_, code)| code)
+    }
+
+    /// The pending remove's `(code, cascade_count)`, computed against the character
+    /// set resolved when the remove was armed — so the impact shown always matches
+    /// what a confirm will delete, even if the selection later moves.
+    pub fn pending_remove_impact(&self) -> Option<(u32, usize)> {
+        self.pending_remove.map(|(character_set_id, code)| {
+            (code, self.remove_cascade_count(character_set_id, code))
+        })
+    }
+
+    /// Asks to remove `code`, arming the impact confirmation. Resolves the target
+    /// character set now (CLAUDE.md: resolve to a concrete target before mutating),
+    /// so a later selection change can't retarget the confirm.
     pub fn request_remove(&mut self, code: u32) {
-        self.pending_remove = Some(code);
+        self.pending_remove = self.selected_character_set_id().map(|id| (id, code));
     }
 
     /// Dismisses a pending remove without applying it.
@@ -232,17 +248,11 @@ impl AppState {
         self.pending_remove = None;
     }
 
-    /// Applies the pending remove (if any), clearing the confirmation.
+    /// Applies the pending remove (if any) against its armed target, clearing the
+    /// confirmation. Cascade-deletes the entry's glyphs as one undo entry (spec/07
+    /// §7.8). Removing an entry with no glyphs still records the entry removal.
     pub fn confirm_remove(&mut self) {
-        if let Some(code) = self.pending_remove.take() {
-            self.remove_entry(code);
-        }
-    }
-
-    /// Removes `code` from the selected character set, cascade-deleting its glyphs as
-    /// one undo entry (spec/07 §7.8). No-op if the selection doesn't resolve.
-    pub fn remove_entry(&mut self, code: u32) {
-        let Some(character_set_id) = self.selected_character_set_id() else {
+        let Some((character_set_id, code)) = self.pending_remove.take() else {
             return;
         };
         if let Ok(change_set) = remove_character_entry(
@@ -423,6 +433,20 @@ mod tests {
         state.undo();
         assert!(state.selected_character_set().unwrap().contains_code(0x41));
         assert!(state.selected_pixel(2, 0));
+    }
+
+    #[test]
+    fn removing_an_entry_with_no_glyphs_is_still_one_undo_entry() {
+        let mut state = editable_state();
+        // 0x42 has an entry but no stored glyph → no cascade, yet the entry removal
+        // itself is a non-empty, undoable change.
+        assert_eq!(state.preview_remove_cascade(0x42), 0);
+        state.request_remove(0x42);
+        state.confirm_remove();
+        assert!(!state.selected_character_set().unwrap().contains_code(0x42));
+        assert_eq!(state.undo_stack.len(), 1);
+        state.undo();
+        assert!(state.selected_character_set().unwrap().contains_code(0x42));
     }
 
     #[test]
