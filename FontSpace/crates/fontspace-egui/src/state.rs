@@ -35,6 +35,9 @@ pub struct AppState {
     pub ids: Box<dyn IdGen>,
     pub selection: Selection,
     pub grid: GridLevel,
+    /// Editable sample text for the text-preview view (spec/12 §12.10). UI state,
+    /// not document data — it is never written to the `.fontspace.json`.
+    pub preview_text: String,
     /// The stroke currently being dragged in the editor, if any (spec/12 §12.4).
     active_stroke: Option<Stroke>,
     /// Workspace-level undo/redo stacks of committed change sets (spec/07 §7.7). A
@@ -63,6 +66,7 @@ impl AppState {
             ids,
             selection,
             grid: GridLevel::Subtle,
+            preview_text: "AAA HAH".to_string(),
             active_stroke: None,
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),

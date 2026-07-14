@@ -15,6 +15,7 @@ use egui_kittest::{Harness, SnapshotOptions};
 use fontspace_egui::charset_view::show_character_set;
 use fontspace_egui::editor::show_glyph_editor;
 use fontspace_egui::page_overview::show_page_overview;
+use fontspace_egui::text_preview::show_text_preview;
 use fontspace_egui::{AppState, FontSpaceApp};
 use fontspace_model::SequentialIdGen;
 
@@ -62,6 +63,17 @@ fn character_set() {
         .build_ui(move |ui| show_character_set(ui, &mut state));
     harness.run();
     harness.snapshot_options("character_set", &options());
+}
+
+#[test]
+fn text_preview() {
+    let mut state = state();
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(400.0, 220.0))
+        .wgpu()
+        .build_ui(move |ui| show_text_preview(ui, &mut state));
+    harness.run();
+    harness.snapshot_options("text_preview", &options());
 }
 
 #[test]

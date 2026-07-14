@@ -17,6 +17,7 @@ pub mod editor;
 pub mod layout;
 pub mod page_overview;
 pub mod state;
+pub mod text_preview;
 
 pub use app::FontSpaceApp;
 pub use layout::{Pane, default_tree, panes_in};

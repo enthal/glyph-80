@@ -12,6 +12,7 @@ use crate::editor::show_glyph_editor;
 use crate::layout::{Pane, default_tree, panes_in};
 use crate::page_overview::show_page_overview;
 use crate::state::AppState;
+use crate::text_preview::show_text_preview;
 
 /// The FontSpace desktop application.
 pub struct FontSpaceApp {
@@ -162,6 +163,7 @@ impl egui_tiles::Behavior<Pane> for PaneBehavior<'_> {
             Pane::GlyphEditor => show_glyph_editor(ui, self.state),
             Pane::PageOverview => show_page_overview(ui, self.state),
             Pane::CharacterSet => show_character_set(ui, self.state),
+            Pane::TextPreview => show_text_preview(ui, self.state),
             other => placeholder(ui, *other),
         }
         egui_tiles::UiResponse::None
