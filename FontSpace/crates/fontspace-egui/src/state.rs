@@ -7,10 +7,13 @@
 //! **not** font semantics — mutations go through `fontspace-ops` (spec/02).
 
 use fontspace_model::{
-    Bitmap, CharacterEntry, CharacterSet, FontSpace, Glyph, GlyphPage, GlyphSet, GlyphSetId,
-    GlyphSize, Guide, GuideAxis, IdGen, PageId, RandomIdGen,
+    Bitmap, CharacterEntry, CharacterSet, CharacterSetId, FontSpace, Glyph, GlyphPage, GlyphSet,
+    GlyphSetId, GlyphSize, Guide, GuideAxis, IdGen, PageId, RandomIdGen,
 };
-use fontspace_ops::{ChangeSet, GlyphRef, SetPixels, apply_change_set, set_pixels, undo};
+use fontspace_ops::{
+    ChangeSet, FontSpaceWarning, GlyphRef, RemoveCharacterEntry, SetPixels, apply_change_set,
+    remove_character_entry, set_pixels, undo,
+};
 
 use crate::editor::geometry::GridLevel;
 use crate::editor::stroke::Stroke;
@@ -37,6 +40,9 @@ pub struct AppState {
     /// single-document workspace for now; multi-document lands in Milestone 3.
     undo_stack: Vec<ChangeSet>,
     redo_stack: Vec<ChangeSet>,
+    /// A character-set entry the user has asked to remove, awaiting confirmation of
+    /// its cascade impact (spec/12 §12.7).
+    pending_remove: Option<u32>,
 }
 
 impl Default for AppState {
@@ -58,6 +64,7 @@ impl AppState {
             active_stroke: None,
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
+            pending_remove: None,
         }
     }
 
@@ -167,6 +174,88 @@ impl AppState {
         character_set
             .entry(self.selection.code)
             .map(|entry| entry.label.as_str())
+    }
+
+    /// The character set referenced by the selected glyph set, if it resolves.
+    pub fn selected_character_set(&self) -> Option<&CharacterSet> {
+        let glyph_set = self.document.glyph_set(self.selection.glyph_set_id)?;
+        self.document.character_set(glyph_set.character_set_id)
+    }
+
+    fn selected_character_set_id(&self) -> Option<CharacterSetId> {
+        Some(
+            self.document
+                .glyph_set(self.selection.glyph_set_id)?
+                .character_set_id,
+        )
+    }
+
+    /// How many glyphs removing `code` from the selected character set would
+    /// cascade-delete (spec/12 §12.7 pre-apply impact, spec/07 §7.8). Computed by
+    /// dry-running the op on a clone, so the real document is untouched.
+    pub fn preview_remove_cascade(&self, code: u32) -> usize {
+        let Some(character_set_id) = self.selected_character_set_id() else {
+            return 0;
+        };
+        let mut preview = self.document.clone();
+        let Ok(change_set) = remove_character_entry(
+            &mut preview,
+            &RemoveCharacterEntry {
+                character_set_id,
+                code,
+            },
+        ) else {
+            return 0;
+        };
+        change_set
+            .warnings
+            .iter()
+            .map(|warning| match warning {
+                FontSpaceWarning::RemoveCascade { removed, .. } => removed.len(),
+                _ => 0,
+            })
+            .sum()
+    }
+
+    /// The entry code awaiting remove-confirmation, if any (spec/12 §12.7).
+    pub fn pending_remove(&self) -> Option<u32> {
+        self.pending_remove
+    }
+
+    /// Asks to remove `code`, arming the impact confirmation.
+    pub fn request_remove(&mut self, code: u32) {
+        self.pending_remove = Some(code);
+    }
+
+    /// Dismisses a pending remove without applying it.
+    pub fn cancel_remove(&mut self) {
+        self.pending_remove = None;
+    }
+
+    /// Applies the pending remove (if any), clearing the confirmation.
+    pub fn confirm_remove(&mut self) {
+        if let Some(code) = self.pending_remove.take() {
+            self.remove_entry(code);
+        }
+    }
+
+    /// Removes `code` from the selected character set, cascade-deleting its glyphs as
+    /// one undo entry (spec/07 §7.8). No-op if the selection doesn't resolve.
+    pub fn remove_entry(&mut self, code: u32) {
+        let Some(character_set_id) = self.selected_character_set_id() else {
+            return;
+        };
+        if let Ok(change_set) = remove_character_entry(
+            &mut self.document,
+            &RemoveCharacterEntry {
+                character_set_id,
+                code,
+            },
+        ) && !change_set.is_empty()
+        {
+            self.undo_stack.push(change_set);
+            self.redo_stack.clear();
+        }
     }
 }
 
@@ -306,6 +395,44 @@ mod tests {
         assert!(state.selected_pixel(0, 2));
         assert!(state.can_undo());
         assert!(!state.can_redo());
+    }
+
+    #[test]
+    fn remove_impact_preview_counts_cascade_without_mutating() {
+        let state = editable_state();
+        // The starter doc draws 'A' (0x41); removing it cascades exactly that glyph.
+        assert_eq!(state.preview_remove_cascade(0x41), 1);
+        // 0x42 has an entry but no glyph → no cascade.
+        assert_eq!(state.preview_remove_cascade(0x42), 0);
+        // Preview did not touch the document.
+        assert!(state.selected_character_set().unwrap().contains_code(0x41));
+        assert!(state.selected_pixel(2, 0));
+    }
+
+    #[test]
+    fn confirm_remove_deletes_entry_and_cascades_as_one_undo_entry() {
+        let mut state = editable_state();
+        state.request_remove(0x41);
+        assert_eq!(state.pending_remove(), Some(0x41));
+        state.confirm_remove();
+        assert_eq!(state.pending_remove(), None);
+        // Entry gone and its glyph cascaded, in one undoable step.
+        assert!(!state.selected_character_set().unwrap().contains_code(0x41));
+        assert_eq!(state.undo_stack.len(), 1);
+        // Undo restores both the entry and the glyph.
+        state.undo();
+        assert!(state.selected_character_set().unwrap().contains_code(0x41));
+        assert!(state.selected_pixel(2, 0));
+    }
+
+    #[test]
+    fn cancel_remove_clears_the_request_without_deleting() {
+        let mut state = editable_state();
+        state.request_remove(0x41);
+        state.cancel_remove();
+        assert_eq!(state.pending_remove(), None);
+        assert!(state.selected_character_set().unwrap().contains_code(0x41));
+        assert!(!state.can_undo());
     }
 
     #[test]

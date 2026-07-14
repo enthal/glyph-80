@@ -7,6 +7,7 @@
 
 use egui_tiles::{Tile, Tree};
 
+use crate::charset_view::show_character_set;
 use crate::editor::show_glyph_editor;
 use crate::layout::{Pane, default_tree, panes_in};
 use crate::page_overview::show_page_overview;
@@ -160,6 +161,7 @@ impl egui_tiles::Behavior<Pane> for PaneBehavior<'_> {
         match pane {
             Pane::GlyphEditor => show_glyph_editor(ui, self.state),
             Pane::PageOverview => show_page_overview(ui, self.state),
+            Pane::CharacterSet => show_character_set(ui, self.state),
             other => placeholder(ui, *other),
         }
         egui_tiles::UiResponse::None

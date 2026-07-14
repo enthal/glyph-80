@@ -12,6 +12,7 @@
 //! geometry/stroke math added by later slices), not in `egui` paint closures.
 
 pub mod app;
+pub mod charset_view;
 pub mod editor;
 pub mod layout;
 pub mod page_overview;

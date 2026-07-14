@@ -12,6 +12,7 @@
 #![cfg(target_os = "linux")]
 
 use egui_kittest::{Harness, SnapshotOptions};
+use fontspace_egui::charset_view::show_character_set;
 use fontspace_egui::editor::show_glyph_editor;
 use fontspace_egui::page_overview::show_page_overview;
 use fontspace_egui::{AppState, FontSpaceApp};
@@ -50,6 +51,17 @@ fn glyph_editor() {
         .build_ui(move |ui| show_glyph_editor(ui, &mut state));
     harness.run();
     harness.snapshot_options("glyph_editor", &options());
+}
+
+#[test]
+fn character_set() {
+    let mut state = state();
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(360.0, 360.0))
+        .wgpu()
+        .build_ui(move |ui| show_character_set(ui, &mut state));
+    harness.run();
+    harness.snapshot_options("character_set", &options());
 }
 
 #[test]
