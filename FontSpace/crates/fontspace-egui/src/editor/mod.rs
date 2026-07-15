@@ -34,7 +34,7 @@ pub fn show_glyph_editor(ui: &mut egui::Ui, state: &mut AppState) {
         return;
     };
     let size = glyph_set.glyph_size;
-    let code = state.selection.code;
+    let code = state.selection().code;
     let name = glyph_set.name.clone();
 
     // Header: what is being edited.

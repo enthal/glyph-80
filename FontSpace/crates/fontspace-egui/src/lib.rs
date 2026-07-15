@@ -20,8 +20,10 @@ pub mod page_overview;
 pub mod platform;
 pub mod state;
 pub mod text_preview;
+pub mod workspace;
 
 pub use app::FontSpaceApp;
 pub use layout::{Pane, default_tree, panes_in};
 pub use platform::{APP_ID, STORAGE_NAMESPACE};
 pub use state::{AppState, GuardedIntent, Selection};
+pub use workspace::{DocumentId, OpenDocument};

@@ -12,8 +12,11 @@ pub struct OpenDocument {
     pub path: Option<PathBuf>,   // None for a never-saved document
     pub content: FontSpace,
     pub dirty: bool,
+    pub selection: Selection,    // active glyph set/page/code — per-document (§11.4)
 }
 ```
+
+The active **selection** (glyph set / page / code) is per-document runtime state and rides on `OpenDocument` so switching documents restores each one's selection; it is persisted as part of the per-document workspace state (§11.4), never in the `.fontspace.json`. `DocumentId` is minted from the injected `IdGen` (never an ambient UUID — spec/03).
 
 ## 11.2 Cross-document references
 

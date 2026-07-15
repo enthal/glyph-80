@@ -46,7 +46,7 @@ pub fn describe_code(code: u32) -> CodeDisplay {
 
 /// Renders the character-set view, applying row-selection and entry removal.
 pub fn show_character_set(ui: &mut egui::Ui, state: &mut AppState) {
-    let selected_code = state.selection.code;
+    let selected_code = state.selection().code;
     // The pending remove's impact is computed against its armed target on a clone,
     // so it is safe (and consistent with what confirm will delete) to read here.
     let pending = state.pending_remove_impact();

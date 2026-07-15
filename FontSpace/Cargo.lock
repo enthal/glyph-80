@@ -1342,6 +1342,7 @@ dependencies = [
  "fontspace-ops",
  "fontspace-render",
  "rfd",
+ "uuid",
 ]
 
 [[package]]
