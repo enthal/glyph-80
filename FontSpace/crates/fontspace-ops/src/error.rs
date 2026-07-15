@@ -1,7 +1,7 @@
 //! Structured operation errors (spec/07, spec/14 §14.2). Every variant names the
 //! object context it can — glyph set, character set, page, code, coordinates.
 
-use fontspace_model::{CharacterSetId, GlyphSetId, GuideId, PageId};
+use fontspace_model::{CharacterSetId, GlyphSetId, GlyphSize, GuideId, PageId};
 
 /// Why an operation could not be resolved or applied. Operations validate fully
 /// before mutating, so returning one of these means the document is unchanged
@@ -107,5 +107,25 @@ pub enum FontSpaceError {
     InvalidEntryOrder {
         character_set: CharacterSetId,
         expected: usize,
+    },
+
+    #[error(
+        "glyph set {glyph_set:?} / page {page:?}: cannot paste {source_size} glyphs into a {target_size} glyph set without an explicit size conversion"
+    )]
+    GeometryMismatch {
+        glyph_set: GlyphSetId,
+        page: PageId,
+        source_size: GlyphSize,
+        target_size: GlyphSize,
+    },
+
+    #[error(
+        "glyph set {glyph_set:?} / page {page:?}: sequential paste from code {start:#06x} overflows the code space at glyph {at_index}"
+    )]
+    SequentialCodeOverflow {
+        glyph_set: GlyphSetId,
+        page: PageId,
+        start: u32,
+        at_index: usize,
     },
 }

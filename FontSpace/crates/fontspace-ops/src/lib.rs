@@ -12,6 +12,7 @@
 mod change_set;
 mod char_set_ops;
 mod error;
+mod fragment_ops;
 mod glyph_ops;
 mod guide_ops;
 mod page_ops;
@@ -33,6 +34,9 @@ pub use char_set_ops::{
     add_character_entry, recode_character_entry, remove_character_entry, reorder_character_entries,
 };
 pub use error::FontSpaceError;
+pub use fragment_ops::{
+    ExtractGlyphs, GlyphMapping, GlyphSizeConversion, PasteGlyphs, extract_glyphs, paste_glyphs,
+};
 pub use glyph_ops::{
     ClearGlyphs, GlyphRef, InvertGlyphs, PixelEdit, SetPixels, ShiftGlyphs, clear_glyphs,
     invert_glyphs, set_pixels, shift_glyphs,
