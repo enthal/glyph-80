@@ -90,13 +90,15 @@ pub fn show_page_overview(ui: &mut egui::Ui, state: &mut AppState) {
     // Multi-glyph copy bar — shown only while a range is drag-selected, so the view is
     // unchanged until you drag (keeping the default snapshot intact).
     if !range.is_empty() {
+        let n = range.len();
+        let plural = if n == 1 { "" } else { "s" };
         ui.horizontal(|ui| {
-            ui.label(format!("{} glyphs selected", range.len()));
+            ui.label(format!("{n} glyph{plural} selected"));
             if ui.button("Copy").clicked()
                 && let Some(fragment) = state.copy_page_selection()
             {
                 ui.ctx().copy_text(fragment);
-                state.set_status(format!("Copied {} glyphs to clipboard", range.len()));
+                state.set_status(format!("Copied {n} glyph{plural} to clipboard"));
             }
             if ui.button("Clear").clicked() {
                 state.clear_page_selection();
