@@ -145,7 +145,7 @@ pub struct Guide {
     pub id: GuideId,
     pub name: String,
     pub axis: GuideAxis,
-    pub position: i32,   // a grid-line coordinate (between pixels), signed; may lie outside glyph bounds
+    pub position: i32,   // grid-line coordinate (between pixels); negative = reckoned from the far edge (spec/12 §12.6)
     pub visible: bool,
     pub locked: bool,
 }

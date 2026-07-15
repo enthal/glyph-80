@@ -82,7 +82,7 @@ Shift+[ and ]     previous / next page
 
 ## 12.6 Guides
 
-Guides render as colored/highlighted lines drawn **between pixels** — on the grid lines, over the top of the matrix's own grid rendering — not through pixel centers. A guide's integer `position` is a grid-line coordinate: a horizontal guide at `position = n` sits on the boundary above row `n` (so `0` is the top edge and `height` is the bottom edge), and likewise a vertical guide at `position = n` sits on the boundary left of column `n`. Positions may be negative or beyond the glyph bounds (chapter 3), in which case the line draws outside the matrix. Each guide is labeled near an edge.
+Guides render as colored/highlighted lines drawn **between pixels** — on the grid lines, over the top of the matrix's own grid rendering — not through pixel centers. A guide's integer `position` is a grid-line coordinate: a horizontal guide at `position = n ≥ 0` sits on the boundary above row `n` (so `0` is the top edge and `height` is the bottom edge), and likewise a vertical guide at `position = n ≥ 0` sits on the boundary left of column `n`. A **negative** `position` is reckoned from the opposite edge — `-k` resolves to `extent − k` (where `extent` is the glyph's height for a horizontal guide, width for a vertical one), so a horizontal `-2` sits two pixels above the bottom edge and stays edge-relative as the glyph is resized. A position beyond the glyph bounds still draws outside the matrix (no clamping). Each guide is labeled near an edge.
 
 Users can add horizontal/vertical guides, rename, drag with integer snapping (snapping to grid lines), type an exact position, show/hide, lock/unlock, and duplicate or copy to selected pages (copying mints fresh `GuideId`s — chapter 3).
 
