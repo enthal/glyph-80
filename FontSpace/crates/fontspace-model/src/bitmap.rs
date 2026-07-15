@@ -210,6 +210,22 @@ pub fn inverted(src: &Bitmap) -> Bitmap {
     Bitmap::from_fn(src.size(), |x, y| !src.get_bit(x, y))
 }
 
+/// `src` drawn into a blank `dest_size` bitmap with `src`'s top-left pixel at
+/// `(off_x, off_y)`. Pixels landing outside the destination are clipped; destination
+/// cells `src` does not cover are off. Offsets may be negative (so `src` starts off
+/// the top/left edge and is cropped). This is the size-changing placement engine
+/// behind the `PlaceAt`/`Center` paste conversions (spec/08 §8.3); unlike
+/// [`shifted`], the result geometry is `dest_size`, not `src`'s.
+pub fn placed(src: &Bitmap, dest_size: GlyphSize, off_x: i32, off_y: i32) -> Bitmap {
+    let (w, h) = (src.width as i32, src.height as i32);
+    Bitmap::from_fn(dest_size, |dx, dy| {
+        // Destination (dx, dy) samples the source at (dx - off_x, dy - off_y).
+        let sx = dx as i32 - off_x;
+        let sy = dy as i32 - off_y;
+        (0..w).contains(&sx) && (0..h).contains(&sy) && src.get_bit(sx as u16, sy as u16)
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -387,6 +403,42 @@ mod tests {
         let s = shifted(&b, 0, -1, OverflowPolicy::Wrap);
         assert!(s.get(0, 2).unwrap());
         assert_eq!(s.count_on(), 1);
+    }
+
+    #[test]
+    fn placed_into_a_larger_bitmap_offsets_and_pads() {
+        // A 2×2 with the top-left pixel on, placed at (1, 1) in a 4×4.
+        let mut src = blank(2, 2);
+        src.set(0, 0, true).unwrap();
+        let out = placed(&src, GlyphSize::new(4, 4), 1, 1);
+        assert_eq!(out.size(), GlyphSize::new(4, 4));
+        assert!(out.get(1, 1).unwrap()); // (0,0) landed at (1,1)
+        assert_eq!(out.count_on(), 1); // nothing else, padding is off
+    }
+
+    #[test]
+    fn placed_clips_pixels_outside_the_destination() {
+        // A 4×4 filled fully, placed at (-1, -1) into a 2×2: only the source's
+        // (1,1)..(2,2) region survives — all 4 destination cells covered.
+        let mut src = blank(4, 4);
+        for y in 0..4 {
+            for x in 0..4 {
+                src.set(x, y, true).unwrap();
+            }
+        }
+        let out = placed(&src, GlyphSize::new(2, 2), -1, -1);
+        assert_eq!(out.count_on(), 4); // 2×2 all on
+        // A positive offset pushing content off the far edge drops it.
+        let out = placed(&src, GlyphSize::new(2, 2), 2, 0);
+        assert!(out.is_blank());
+    }
+
+    #[test]
+    fn placed_at_zero_into_the_same_size_is_identity() {
+        let mut src = blank(3, 3);
+        src.set(0, 2, true).unwrap();
+        src.set(2, 0, true).unwrap();
+        assert_eq!(placed(&src, src.size(), 0, 0), src);
     }
 
     #[test]

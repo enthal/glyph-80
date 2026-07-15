@@ -3,7 +3,7 @@
 //! must not live inside a UI function).
 
 use fontspace_model::{FontSpace, GlyphSetId, OverflowPolicy};
-use fontspace_ops::{GlyphMapping, GlyphSelector, PageSelector};
+use fontspace_ops::{GlyphMapping, GlyphSelector, GlyphSizeConversion, PageSelector};
 use fontspace_render::RenderLayout;
 
 /// Why a command-line value could not be parsed or resolved.
@@ -25,6 +25,10 @@ pub enum ParseError {
     RenderSubjectConflict,
     #[error("invalid mapping {0:?} (expected 'by-code' or 'sequential-from-code:CODE')")]
     Mapping(String),
+    #[error(
+        "invalid size conversion {0:?} (expected 'require-exact', 'center', or 'place-at:X,Y')"
+    )]
+    SizeConversion(String),
 }
 
 /// A single pixel assignment parsed from `X,Y,VALUE`.
@@ -90,6 +94,28 @@ pub fn parse_glyph_mapping(spec: &str) -> Result<GlyphMapping, ParseError> {
         return Ok(GlyphMapping::SequentialFromCode(parse_code_token(code)?));
     }
     Err(ParseError::Mapping(spec.to_string()))
+}
+
+/// Parses a paste size conversion (spec/08 §8.3): `require-exact` (the default),
+/// `center`, or `place-at:X,Y` where X and Y are signed pixel offsets. `crop` and
+/// `scale-nearest` arrive with a later slice.
+pub fn parse_size_conversion(spec: &str) -> Result<GlyphSizeConversion, ParseError> {
+    let spec = spec.trim();
+    if spec.eq_ignore_ascii_case("require-exact") {
+        return Ok(GlyphSizeConversion::RequireExact);
+    }
+    if spec.eq_ignore_ascii_case("center") {
+        return Ok(GlyphSizeConversion::Center);
+    }
+    if let Some(offsets) = spec.strip_prefix("place-at:")
+        && let Some((x, y)) = offsets.split_once(',')
+    {
+        let err = || ParseError::SizeConversion(spec.to_string());
+        let x = x.trim().parse::<i16>().map_err(|_| err())?;
+        let y = y.trim().parse::<i16>().map_err(|_| err())?;
+        return Ok(GlyphSizeConversion::PlaceAt { x, y });
+    }
+    Err(ParseError::SizeConversion(spec.to_string()))
 }
 
 /// Parses a page selector: `all`, or a comma list of page names (spec/13.1).
@@ -403,6 +429,43 @@ mod tests {
         assert_eq!(
             parse_glyph_mapping("sequential-from-code:0xZZ"),
             Err(ParseError::Code("0xZZ".into()))
+        );
+    }
+
+    #[test]
+    fn size_conversion_parses_each_form() {
+        assert_eq!(
+            parse_size_conversion("require-exact").unwrap(),
+            GlyphSizeConversion::RequireExact
+        );
+        assert_eq!(
+            parse_size_conversion("center").unwrap(),
+            GlyphSizeConversion::Center
+        );
+        assert_eq!(
+            parse_size_conversion("place-at:2,3").unwrap(),
+            GlyphSizeConversion::PlaceAt { x: 2, y: 3 }
+        );
+        // Signed offsets are allowed.
+        assert_eq!(
+            parse_size_conversion("place-at:-1,-4").unwrap(),
+            GlyphSizeConversion::PlaceAt { x: -1, y: -4 }
+        );
+    }
+
+    #[test]
+    fn size_conversion_rejects_unknown_and_malformed() {
+        assert_eq!(
+            parse_size_conversion("crop"),
+            Err(ParseError::SizeConversion("crop".into()))
+        );
+        assert_eq!(
+            parse_size_conversion("place-at:2"),
+            Err(ParseError::SizeConversion("place-at:2".into()))
+        );
+        assert_eq!(
+            parse_size_conversion("place-at:x,y"),
+            Err(ParseError::SizeConversion("place-at:x,y".into()))
         );
     }
 }

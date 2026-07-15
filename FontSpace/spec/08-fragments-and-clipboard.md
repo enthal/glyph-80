@@ -70,9 +70,11 @@ pub enum GlyphSizeConversion {
 
 The default `GlyphSizeConversion` is `RequireExact`: pasting between incompatible geometries fails with a clear error unless the user chooses a conversion. No silent resize, ever. `RequireExact` checks both the fragment's declared `source_glyph_size` and every glyph's actual bitmap size against the destination geometry, so a malformed fragment (§8.2, e.g. from an untrusted clipboard or file) cannot slip a wrong-size glyph past the geometry-agreement invariant (spec/17).
 
+The conversions are **lossless placements** — they copy the source pixels into a blank destination-size glyph, clipping whatever falls outside; none resamples. `PlaceAt { x, y }` puts the source's top-left pixel at `(x, y)` (offsets may be negative, so the source is cropped from the top/left). `Center` places it with equal margins, cropping symmetrically when the source is larger; an odd size difference floors toward the top-left. `Crop` (an explicit top-left/region crop) and `ScaleNearest` (the one resampling conversion) arrive with a later slice.
+
 Two further paste rules follow from the model: a paste **never creates a dangling glyph** — every resolved destination `code` must already have an entry in the destination character set (the same rule operations obey, spec/04 §4.4) — and a `SequentialFromCode` run that would exceed the 32-bit code space is rejected, not wrapped or saturated. Like every operation, a paste validates all targets before mutating and returns one invertible change set (spec/07).
 
-The policy variants land incrementally alongside the fragment variants: the glyph paste supports `ByCode` and `SequentialFromCode` with `RequireExact` first; `BySlot` and the resizing conversions (`PlaceAt`, `Center`, `Crop`, `ScaleNearest`) arrive with the size-conversion slice.
+The policy variants land incrementally alongside the fragment variants: the glyph paste supports `ByCode` and `SequentialFromCode` mappings and `RequireExact`, `PlaceAt`, and `Center` conversions. `BySlot`, `Crop`, and `ScaleNearest` arrive with later slices.
 
 When pasting a glyph set into another document, its character-set dependency must be resolved explicitly: reused if the user selects an equivalent destination set, copied as a new object, explicitly rebound, or rejected. FontSpace never invents a mapping.
 

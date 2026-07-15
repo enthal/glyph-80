@@ -20,16 +20,16 @@ use fontspace_model::{
     FontSpace, FontSpaceFragment, GlyphSetId, IdGen, PageId, RandomIdGen, SequentialIdGen,
 };
 use fontspace_ops::{
-    ChangeSet, ExtractGlyphs, FontSpaceError, GlyphRef, GlyphSelector, GlyphSizeConversion,
-    PasteGlyphs, PixelEdit, SetPixels, ShiftGlyphs, extract_glyphs, paste_glyphs, resolve_pages_in,
-    set_pixels, shift_glyphs,
+    ChangeSet, ExtractGlyphs, FontSpaceError, GlyphRef, GlyphSelector, PasteGlyphs, PixelEdit,
+    SetPixels, ShiftGlyphs, extract_glyphs, paste_glyphs, resolve_pages_in, set_pixels,
+    shift_glyphs,
 };
 use fontspace_render::{TextGridRequest, TextStringRequest, render_text_grid, render_text_string};
 
 use parse::{
     ParseError, RenderSubject, parse_code_token, parse_glyph_mapping, parse_glyph_selector,
-    parse_layout, parse_overflow, parse_page_selector, parse_pixel, resolve_glyph_set,
-    resolve_render_subject,
+    parse_layout, parse_overflow, parse_page_selector, parse_pixel, parse_size_conversion,
+    resolve_glyph_set, resolve_render_subject,
 };
 
 #[derive(Parser)]
@@ -153,6 +153,9 @@ enum Command {
         /// `by-code` (default) or `sequential-from-code:CODE` (spec/08 §8.3).
         #[arg(long, default_value = "by-code")]
         mapping: String,
+        /// `require-exact` (default), `center`, or `place-at:X,Y` (spec/08 §8.3).
+        #[arg(long, default_value = "require-exact")]
+        size: String,
     },
 }
 
@@ -384,6 +387,7 @@ fn run(cli: Cli) -> Result<(), CliError> {
             glyph_set,
             page,
             mapping,
+            size,
         } => {
             let mut doc = load_document(&path)?;
             let glyph_set_id = resolve_glyph_set(&doc, &glyph_set)?;
@@ -396,7 +400,7 @@ fn run(cli: Cli) -> Result<(), CliError> {
                     target_glyph_set_id: glyph_set_id,
                     target_page_id: page_id,
                     mapping: parse_glyph_mapping(&mapping)?,
-                    size_conversion: GlyphSizeConversion::RequireExact,
+                    size_conversion: parse_size_conversion(&size)?,
                 },
             )?;
             finish_mutation(&path, &doc, &change_set, cli.dry_run)

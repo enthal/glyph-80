@@ -23,7 +23,7 @@ mod ids;
 mod limits;
 mod validation;
 
-pub use bitmap::{Bitmap, BitmapError, OverflowPolicy, flipped, inverted, shifted};
+pub use bitmap::{Bitmap, BitmapError, OverflowPolicy, flipped, inverted, placed, shifted};
 pub use character_set::{CharacterEntry, CharacterSet};
 pub use color::Rgba;
 pub use document::{CURRENT_FORMAT_VERSION, FontSpace, FontSpaceMetadata};
