@@ -537,8 +537,7 @@ impl AppState {
         self.status = Some(load_status(&path, &outcome.warnings));
         let previous = std::mem::replace(&mut self.active, document);
         self.background.insert(0, previous);
-        self.active_stroke = None;
-        self.pending_remove = None;
+        self.discard_active_interaction();
     }
 
     /// Makes the open document `id` active, swapping the current active into the
@@ -559,8 +558,16 @@ impl AppState {
         let target = self.background.remove(index);
         let previous = std::mem::replace(&mut self.active, target);
         self.background.insert(0, previous);
+        self.discard_active_interaction();
+    }
+
+    /// Clears interaction state tied to the previously-active document when the active
+    /// document changes: the in-progress stroke, the pending remove, and any pending
+    /// unsaved-changes guard (which was about the document that just stepped aside).
+    fn discard_active_interaction(&mut self) {
         self.active_stroke = None;
         self.pending_remove = None;
+        self.pending_discard = None;
     }
 
     /// The open documents as `(document, is_active)`, active first, then the background
@@ -1077,5 +1084,33 @@ mod tests {
         state.switch_to(first_id);
         assert!(state.selected_pixel(2, 0));
         assert!(state.can_redo());
+
+        // Redo re-applies on the originating document: the erase returns.
+        state.redo();
+        assert!(!state.selected_pixel(2, 0));
+    }
+
+    #[test]
+    fn reverting_a_document_keeps_other_documents_undo_history() {
+        // The §11.6 invariant: Revert drops only the reverted document's undo entries,
+        // leaving other open documents' history intact.
+        let mut state = editable_state();
+        let first_id = state.open_documents().next().unwrap().0.id;
+        state.mark_saved(PathBuf::from("/tmp/a.fontspace.json"));
+        state.begin_stroke((0, 0)); // an edit on the first document
+        state.commit_stroke();
+
+        // Open a second document and give it an edit too.
+        state.open_document(loaded_starter(), PathBuf::from("/tmp/b.fontspace.json"));
+        state.begin_stroke((0, 0));
+        state.commit_stroke();
+        assert_eq!(state.undo_stack.len(), 2); // one entry per document
+
+        // Revert the first document (reload in place).
+        state.switch_to(first_id);
+        state.load_document(loaded_starter(), PathBuf::from("/tmp/a.fontspace.json"));
+
+        // Only the first document's entry was dropped; the second's survives.
+        assert_eq!(state.undo_stack.len(), 1);
     }
 }
