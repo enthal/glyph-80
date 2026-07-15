@@ -19,7 +19,7 @@ pub enum FontSpaceObject {
 }
 ```
 
-A fragment carries enough dependency metadata to resolve referenced character sets and source geometry. A `GlyphFragment` records the source `glyph_size` and, per glyph, its `code` and `label` (so paste can map by code or by slot into a destination whose character set differs):
+A fragment carries enough dependency metadata to resolve referenced character sets and source geometry. A `GlyphFragment` records the source `glyph_size` and, per glyph, its `code` (so paste can map back by code into a destination whose character set differs) and its `label` (human-readable metadata for the paste UI):
 
 ```rust
 pub struct GlyphFragment {
@@ -74,9 +74,11 @@ The default `GlyphSizeConversion` is `RequireExact`: pasting between incompatibl
 
 `PlaceAt` and `Center` are **lossless placements** — they copy the source pixels into a blank destination-size glyph, clipping whatever falls outside; neither resamples. `PlaceAt { x, y }` puts the source's top-left pixel at `(x, y)` (offsets may be negative, so the source is cropped from the top/left). `Center` places it with equal margins, cropping symmetrically when the source is larger; an odd size difference floors toward the top-left. `ScaleNearest` is the one **resampling** conversion: each destination cell samples the single source pixel its position maps to (`sx = dx * src_w / dest_w`, floored), so scaling stays binary and needs no interpolation. `Crop` (an explicit top-left/region crop) arrives with a later slice.
 
+`BySlot` maps the i-th fragment glyph to the destination character set's entry at **ordinal** `i` — its position in the copied sequence, not its `code`. Because a fragment is emitted in source entry order, `BySlot` reproduces that ordering into the destination's slots no matter how the two sets' codes differ. Note that a fragment holds only *drawn* glyphs (`extract` prunes blank codes, §8.1), so a blank in the copied range shifts every following glyph one slot earlier; `BySlot` preserves the original source slot numbers only when the range has no gaps. A fragment longer than the destination set is an error, never truncated.
+
 Two further paste rules follow from the model: a paste **never creates a dangling glyph** — every resolved destination `code` must already have an entry in the destination character set (the same rule operations obey, spec/04 §4.4) — and a `SequentialFromCode` run that would exceed the 32-bit code space is rejected, not wrapped or saturated. Like every operation, a paste validates all targets before mutating and returns one invertible change set (spec/07).
 
-The policy variants land incrementally alongside the fragment variants: the glyph paste supports `ByCode` and `SequentialFromCode` mappings and `RequireExact`, `PlaceAt`, `Center`, and `ScaleNearest` conversions. `BySlot` and `Crop` arrive with later slices.
+The policy variants land incrementally alongside the fragment variants: the glyph paste supports `ByCode`, `BySlot`, and `SequentialFromCode` mappings and `RequireExact`, `PlaceAt`, `Center`, and `ScaleNearest` conversions. Only `Crop` arrives with a later slice.
 
 When pasting a glyph set into another document, its character-set dependency must be resolved explicitly: reused if the user selects an equivalent destination set, copied as a new object, explicitly rebound, or rejected. FontSpace never invents a mapping.
 
