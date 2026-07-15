@@ -65,6 +65,7 @@ pub fn show_glyph_editor(ui: &mut egui::Ui, state: &mut AppState) {
     ui.separator();
 
     guides_section(ui, state);
+    shift_toolbar(ui, state);
     region_toolbar(ui, state);
 
     // Body: the painted matrix fills the remaining space and takes pointer input.
@@ -251,6 +252,29 @@ fn guides_section(ui: &mut egui::Ui, state: &mut AppState) {
     } else if let Some(id) = remove {
         state.remove_guide(id);
     }
+}
+
+/// Whole-glyph shift control (spec/12 §12.3): nudge the current glyph one pixel in any
+/// direction, one undo entry each, mirroring the CLI `shift`. The Wrap toggle chooses
+/// between rotating rows/columns around the opposite edge and discarding what falls off.
+fn shift_toolbar(ui: &mut egui::Ui, state: &mut AppState) {
+    ui.horizontal(|ui| {
+        ui.label("Shift glyph:");
+        if ui.button("Left").clicked() {
+            state.shift_glyph(-1, 0);
+        }
+        if ui.button("Right").clicked() {
+            state.shift_glyph(1, 0);
+        }
+        if ui.button("Up").clicked() {
+            state.shift_glyph(0, -1);
+        }
+        if ui.button("Down").clicked() {
+            state.shift_glyph(0, 1);
+        }
+        ui.checkbox(&mut state.shift_wrap, "Wrap");
+    });
+    ui.separator();
 }
 
 /// Controls for the pixel-region marquee — shown only while a selection exists, so

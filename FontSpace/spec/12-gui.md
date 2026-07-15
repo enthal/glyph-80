@@ -54,6 +54,8 @@ The clamp to at least one pixel keeps the matrix non-degenerate (and hover mappi
 
 Supports fit-to-panel, integer zoom, mouse-wheel zoom, panning when zoomed past the viewport, and grid levels off/subtle/strong. The size math, hover mapping, and stroke logic are **pure functions** tested outside the paint closure (chapter 15).
 
+**Whole-glyph shift.** A shift control nudges the entire current glyph one pixel left/right/up/down, each nudge a single undo entry, invoking the same `ShiftGlyphs` operation (chapter 7 §7.5) the CLI `shift` uses. A **Wrap** toggle chooses the overflow policy: off (the default) discards pixels that fall off an edge, on rotates rows/columns around to the opposite edge. This is the whole-glyph counterpart to the region flip/rotate of §12.4.
+
 ## 12.4 Pointer editing: first pixel determines the stroke
 
 ```text
