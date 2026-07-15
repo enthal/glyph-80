@@ -13,17 +13,23 @@ use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
 
-use fontspace_json::{JsonError, load as load_json, save as save_json, write_fragment};
-use fontspace_model::{FontSpace, FontSpaceFragment, IdGen, RandomIdGen, SequentialIdGen};
+use fontspace_json::{
+    JsonError, load as load_json, load_fragment, save as save_json, write_fragment,
+};
+use fontspace_model::{
+    FontSpace, FontSpaceFragment, GlyphSetId, IdGen, PageId, RandomIdGen, SequentialIdGen,
+};
 use fontspace_ops::{
-    ChangeSet, ExtractGlyphs, FontSpaceError, GlyphRef, GlyphSelector, PixelEdit, SetPixels,
-    ShiftGlyphs, extract_glyphs, resolve_pages_in, set_pixels, shift_glyphs,
+    ChangeSet, ExtractGlyphs, FontSpaceError, GlyphRef, GlyphSelector, GlyphSizeConversion,
+    PasteGlyphs, PixelEdit, SetPixels, ShiftGlyphs, extract_glyphs, paste_glyphs, resolve_pages_in,
+    set_pixels, shift_glyphs,
 };
 use fontspace_render::{TextGridRequest, TextStringRequest, render_text_grid, render_text_string};
 
 use parse::{
-    ParseError, RenderSubject, parse_code_token, parse_glyph_selector, parse_layout,
-    parse_overflow, parse_page_selector, parse_pixel, resolve_glyph_set, resolve_render_subject,
+    ParseError, RenderSubject, parse_code_token, parse_glyph_mapping, parse_glyph_selector,
+    parse_layout, parse_overflow, parse_page_selector, parse_pixel, resolve_glyph_set,
+    resolve_render_subject,
 };
 
 #[derive(Parser)]
@@ -133,6 +139,21 @@ enum Command {
         #[arg(long)]
         output: PathBuf,
     },
+    /// Paste a glyph fragment onto one page (spec/08 §8.3). Geometry must match
+    /// exactly (`RequireExact`); no destination code is guessed.
+    Paste {
+        path: PathBuf,
+        /// The fragment JSON file to paste (from `extract`).
+        #[arg(long)]
+        fragment: PathBuf,
+        #[arg(long)]
+        glyph_set: String,
+        #[arg(long)]
+        page: String,
+        /// `by-code` (default) or `sequential-from-code:CODE` (spec/08 §8.3).
+        #[arg(long, default_value = "by-code")]
+        mapping: String,
+    },
 }
 
 /// Everything a command can fail with; rendered to stderr by `main`.
@@ -146,6 +167,12 @@ enum CliError {
     Op(#[from] FontSpaceError),
     #[error("i/o error: {0}")]
     Io(#[from] std::io::Error),
+    #[error("reading {path}: {source}")]
+    ReadFile {
+        path: String,
+        #[source]
+        source: std::io::Error,
+    },
     #[error("{0} already exists (refusing to overwrite; delete it first)")]
     FileExists(String),
     #[error("--page must match exactly one page, but matched {count}")]
@@ -206,14 +233,8 @@ fn run(cli: Cli) -> Result<(), CliError> {
         } => {
             let mut doc = load_document(&path)?;
             let glyph_set_id = resolve_glyph_set(&doc, &glyph_set)?;
-            // set-pixels targets one glyph on one page: the --page selector must
-            // resolve to exactly one page — never silently narrow a list (CLAUDE.md
-            // "no hidden remapping"). Ambiguous duplicate names are rejected by ops.
-            let resolved = resolve_pages_in(&doc, glyph_set_id, &parse_page_selector(&page))?;
-            let page_id = match resolved.as_slice() {
-                [only] => *only,
-                other => return Err(CliError::PageTargetNotUnique { count: other.len() }),
-            };
+            // set-pixels targets one glyph on one page.
+            let page_id = resolve_single_page(&doc, glyph_set_id, &page)?;
             let code = parse_code_token(&code)?;
             let edits = pixels
                 .iter()
@@ -332,13 +353,8 @@ fn run(cli: Cli) -> Result<(), CliError> {
         } => {
             let doc = load_document(&path)?;
             let glyph_set_id = resolve_glyph_set(&doc, &glyph_set)?;
-            // Extract targets one page: the --page selector must resolve to exactly
-            // one page — never silently narrow a list (CLAUDE.md "no hidden remapping").
-            let resolved = resolve_pages_in(&doc, glyph_set_id, &parse_page_selector(&page))?;
-            let page_id = match resolved.as_slice() {
-                [only] => *only,
-                other => return Err(CliError::PageTargetNotUnique { count: other.len() }),
-            };
+            // Extract targets one page.
+            let page_id = resolve_single_page(&doc, glyph_set_id, &page)?;
             let glyphs = match glyphs {
                 Some(spec) => parse_glyph_selector(&spec)?,
                 None => GlyphSelector::All,
@@ -360,6 +376,30 @@ fn run(cli: Cli) -> Result<(), CliError> {
                 println!("{count} glyph(s) written to {}", output.display());
             }
             Ok(())
+        }
+
+        Command::Paste {
+            path,
+            fragment,
+            glyph_set,
+            page,
+            mapping,
+        } => {
+            let mut doc = load_document(&path)?;
+            let glyph_set_id = resolve_glyph_set(&doc, &glyph_set)?;
+            let page_id = resolve_single_page(&doc, glyph_set_id, &page)?;
+            let FontSpaceFragment::Glyphs(fragment) = load_fragment_file(&fragment)?;
+            let change_set = paste_glyphs(
+                &mut doc,
+                &PasteGlyphs {
+                    fragment,
+                    target_glyph_set_id: glyph_set_id,
+                    target_page_id: page_id,
+                    mapping: parse_glyph_mapping(&mapping)?,
+                    size_conversion: GlyphSizeConversion::RequireExact,
+                },
+            )?;
+            finish_mutation(&path, &doc, &change_set, cli.dry_run)
         }
     }
 }
@@ -418,12 +458,41 @@ fn finish_mutation(
 }
 
 fn load_document(path: &Path) -> Result<FontSpace, CliError> {
-    let text = fs::read_to_string(path)?;
+    let text = read_to_string_in_context(path)?;
     let outcome = load_json(&text)?;
     for warning in &outcome.warnings {
         eprintln!("warning: {warning}");
     }
     Ok(outcome.document)
+}
+
+fn load_fragment_file(path: &Path) -> Result<FontSpaceFragment, CliError> {
+    let text = read_to_string_in_context(path)?;
+    Ok(load_fragment(&text)?)
+}
+
+/// Reads a file to a string, naming the path on failure so a missing/unreadable file
+/// reports *which* file was at fault (CLAUDE.md: errors identify object context).
+fn read_to_string_in_context(path: &Path) -> Result<String, CliError> {
+    fs::read_to_string(path).map_err(|source| CliError::ReadFile {
+        path: path.display().to_string(),
+        source,
+    })
+}
+
+/// Resolves `--page` to exactly one page id, rejecting an ambiguous or empty match
+/// rather than silently narrowing a list (CLAUDE.md "no hidden remapping"). Shared by
+/// the single-page commands (`set-pixels`, `extract`, `paste`).
+fn resolve_single_page(
+    doc: &FontSpace,
+    glyph_set_id: GlyphSetId,
+    page: &str,
+) -> Result<PageId, CliError> {
+    let resolved = resolve_pages_in(doc, glyph_set_id, &parse_page_selector(page))?;
+    match resolved.as_slice() {
+        [only] => Ok(*only),
+        other => Err(CliError::PageTargetNotUnique { count: other.len() }),
+    }
 }
 
 /// Writes canonical JSON atomically (write `.tmp`, flush, rename over the
