@@ -91,7 +91,7 @@ An ordered table showing ordinal, `code`, rendered character where printable, la
 
 ## 12.8 Page overview
 
-Every glyph in a selected page (absent codes shown blank, dangling flagged). Controls: thumbnail size, auto/fixed columns, label mode (none/character/hex/full), grid overlay, blank indicator, modified indicator, filter/range. Interactions: click selects, double-click opens the editor, drag-select a range, copy/paste, and apply shift/clear/invert to a selection.
+Every glyph in a selected page (absent codes shown blank, dangling flagged). Controls: thumbnail size, auto/fixed columns, label mode (none/character/hex/full), grid overlay, blank indicator, modified indicator, filter/range. Interactions: click selects, **hover shows the glyph's info** (hex code, character/control notation, label), double-click opens the editor, drag-select a range, copy/paste, and apply shift/clear/invert to a selection.
 
 ## 12.9 Character across pages and files
 
@@ -99,7 +99,7 @@ Shows one `code` across selected pages, glyph sets, and files, with synchronized
 
 ## 12.10 Text preview
 
-Editable sample text, glyph-set/page selection, fg/bg colors, inversion, integer zoom, character/line spacing, wrap width, optional grid overlay, and sample presets (ASCII coverage, upper/lower, digits, punctuation, programming text, terminal output). Optional multi-page mode renders the same text per page.
+Editable sample text, glyph-set/page selection, fg/bg colors, inversion, integer zoom, character/line spacing, wrap width, optional grid overlay, and sample presets (ASCII coverage, upper/lower, digits, punctuation, programming text, terminal output). Optional multi-page mode renders the same text per page. Glyph cells render **flush** by default (no inter-cell spacing); an optional 1px divider overlay (the grid overlay, off by default) separates them. Like the page overview, **clicking a glyph selects it** and **hovering shows its info** (hex code, character/control notation, label).
 
 ## 12.11 Inspector
 

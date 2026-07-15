@@ -6,6 +6,8 @@
 //!
 //! The `code`→display mapping is a pure function tested outside the paint closure.
 
+use fontspace_model::CharacterSet;
+
 use crate::state::AppState;
 
 /// Standard ASCII C0 control names, indexed by code `0x00..=0x1F`.
@@ -42,6 +44,27 @@ pub fn describe_code(code: u32) -> CodeDisplay {
         glyph: char::from_u32(code).filter(|c| !c.is_control()),
         notation: control_notation(code),
     }
+}
+
+/// A hover tooltip describing a `code`: its hex value, its printable character or
+/// control notation, and its character-set label when present. Shared by the page
+/// overview and text preview (spec/12 §12.8, §12.10).
+pub fn glyph_tooltip(code: u32, character_set: Option<&CharacterSet>) -> String {
+    let display = describe_code(code);
+    let mut tooltip = format!("0x{code:04X}");
+    if let Some(glyph) = display.glyph {
+        tooltip.push_str(&format!("  {glyph}"));
+    } else if let Some(notation) = display.notation {
+        tooltip.push_str(&format!("  {notation}"));
+    }
+    let label = character_set
+        .and_then(|cs| cs.entry(code))
+        .map(|entry| entry.label.as_str())
+        .unwrap_or_default();
+    if !label.is_empty() {
+        tooltip.push_str(&format!("\n{label}"));
+    }
+    tooltip
 }
 
 /// Renders the character-set view, applying row-selection and entry removal.
@@ -159,6 +182,23 @@ mod tests {
         assert_eq!(a.notation, None);
         // Space is printable (not a control character).
         assert_eq!(describe_code(0x20).glyph, Some(' '));
+    }
+
+    #[test]
+    fn glyph_tooltip_combines_hex_character_and_label() {
+        use fontspace_model::{CharacterEntry, SequentialIdGen};
+        let mut ids = SequentialIdGen::new();
+        let mut cs = CharacterSet::new(&mut ids, "cs", "");
+        cs.entries = vec![CharacterEntry {
+            code: 0x41,
+            label: "Latin A".to_string(),
+        }];
+        // Printable code with a label: hex, character, then the label on its own line.
+        assert_eq!(glyph_tooltip(0x41, Some(&cs)), "0x0041  A\nLatin A");
+        // Control code shows its notation instead of a character; absent entry → no label.
+        assert_eq!(glyph_tooltip(0x00, Some(&cs)), "0x0000  NUL");
+        // No character set at all → just hex + character.
+        assert_eq!(glyph_tooltip(0x42, None), "0x0042  B");
     }
 
     #[test]
