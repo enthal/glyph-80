@@ -114,6 +114,23 @@ pub fn show_page_overview(ui: &mut egui::Ui, state: &mut AppState) {
                 let count = state.invert_page_selection();
                 state.set_status(format!("Inverted {count} glyph{}", plural_s(count)));
             }
+            ui.separator();
+            // Shift the whole run one pixel; Wrap (shared with the editor) rotates
+            // rows/columns around the far edge instead of discarding what falls off.
+            ui.label("Shift:");
+            for (label, dx, dy) in [
+                ("Left", -1, 0),
+                ("Right", 1, 0),
+                ("Up", 0, -1),
+                ("Down", 0, 1),
+            ] {
+                if ui.button(label).clicked() {
+                    let count = state.shift_page_selection(dx, dy);
+                    state.set_status(format!("Shifted {count} glyph{}", plural_s(count)));
+                }
+            }
+            ui.checkbox(&mut state.shift_wrap, "Wrap");
+            ui.separator();
             if ui.button("Clear").clicked() {
                 state.clear_page_selection();
             }

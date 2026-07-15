@@ -398,6 +398,37 @@ impl AppState {
         count
     }
 
+    /// Shifts every stored glyph in the page-overview run by `(dx, dy)` as one undo
+    /// entry (spec/12 §12.8), reusing the `ShiftGlyphs` batch op. The overflow policy
+    /// follows [`shift_wrap`](Self::shift_wrap) (shared with the editor's shift control):
+    /// wrap rotates rows/columns around the far edge, discard drops what falls off.
+    /// Absent glyphs are left untouched. Returns how many in-charset codes the run
+    /// targeted (`0` on a no-op), for the caller's status line.
+    pub fn shift_page_selection(&mut self, dx: i16, dy: i16) -> usize {
+        let codes = self.charset_codes_in_page_selection();
+        if codes.is_empty() {
+            return 0;
+        }
+        let count = codes.len();
+        let overflow = if self.shift_wrap {
+            OverflowPolicy::Wrap
+        } else {
+            OverflowPolicy::Discard
+        };
+        let request = ShiftGlyphs {
+            glyph_set_id: self.active.selection.glyph_set_id,
+            pages: PageSelector::Id(self.active.selection.page_id),
+            glyphs: GlyphSelector::Codes(codes),
+            dx,
+            dy,
+            overflow,
+        };
+        if let Ok(change_set) = shift_glyphs(&mut self.active.content, &request) {
+            self.record(change_set);
+        }
+        count
+    }
+
     /// Mirrors the selected region in place (`dir`) as one undo entry — the "reverse"
     /// (spec/12 §12.4). A no-op when there is no selection or the region is symmetric.
     pub fn flip_selection(&mut self, dir: FlipDir) {
@@ -1311,6 +1342,28 @@ mod tests {
         assert!(state.can_undo());
         state.undo();
         assert!(state.selected_pixel(2, 0));
+    }
+
+    #[test]
+    fn shift_page_selection_moves_the_run_and_is_one_undo_entry() {
+        let mut state = editable_state();
+        assert!(!state.shift_wrap); // discard by default
+        let before = state.selected_bitmap().expect("A is drawn").clone();
+        assert!(state.selected_pixel(2, 0)); // 'A' (0x41) has a pixel at (2,0)
+
+        state.begin_page_selection(0x41);
+        state.set_page_selection_range(vec![0x41, 0x42, 0x43]);
+        let count = state.shift_page_selection(1, 0); // shift the run right by one
+        assert_eq!(count, 3);
+
+        // 'A' (the drawn glyph in the run) moved: leftmost content shifted right, so
+        // the glyph changed; one undo entry restores it exactly.
+        let after = state.selected_bitmap().expect("A still drawn");
+        assert_ne!(after, &before);
+        assert!(state.selected_pixel(3, 0)); // (2,0) carried to (3,0)
+        assert!(state.can_undo());
+        state.undo();
+        assert_eq!(state.selected_bitmap().expect("A restored"), &before);
     }
 
     #[test]
