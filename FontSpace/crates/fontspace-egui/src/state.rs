@@ -38,11 +38,13 @@ pub struct Selection {
 /// A file action that would discard the active document's unsaved edits, held pending
 /// confirmation (spec/12 §12.12). The guard prevents a click from silently discarding
 /// edits; the user confirms or cancels. (Open no longer discards — it opens a new
-/// document — so it is unguarded; Close joins this in a later slice.)
+/// document — so it is unguarded.)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GuardedIntent {
     /// Reload the active document from its file on disk, discarding its edits.
     Revert,
+    /// Close the active document, discarding its edits.
+    Close,
 }
 
 /// The editable state of the workspace: the open documents plus view options.
@@ -329,6 +331,14 @@ impl AppState {
         }
     }
 
+    /// Drops every undo/redo entry tagged with `id` from both stacks. Used when a
+    /// document leaves the workspace-level history — on Revert (reload in place) and
+    /// on Close (spec/11 §11.6) — so no orphaned entry can target a stale document.
+    fn drop_history_of(&mut self, id: DocumentId) {
+        self.undo_stack.retain(|(entry_id, _)| *entry_id != id);
+        self.redo_stack.retain(|(entry_id, _)| *entry_id != id);
+    }
+
     /// The open document with `id` (active or background), if present.
     fn document_mut_by_id(&mut self, id: DocumentId) -> Option<&mut OpenDocument> {
         if self.active.id == id {
@@ -511,9 +521,7 @@ impl AppState {
     /// entries stay), clears any in-progress interaction, and marks it clean. Load
     /// warnings (e.g. dangling glyphs) go to the status strip.
     pub fn load_document(&mut self, outcome: LoadOutcome, path: PathBuf) {
-        let active_id = self.active.id;
-        self.undo_stack.retain(|(id, _)| *id != active_id);
-        self.redo_stack.retain(|(id, _)| *id != active_id);
+        self.drop_history_of(self.active.id);
         self.active.content = outcome.document;
         self.active_stroke = None;
         self.pending_remove = None;
@@ -580,6 +588,28 @@ impl AppState {
     /// How many documents are open (always at least one).
     pub fn open_document_count(&self) -> usize {
         1 + self.background.len()
+    }
+
+    /// Whether the active document can be closed: only when another remains open. The
+    /// workspace always keeps at least one document; a `New` empty document arrives
+    /// with a later slice.
+    pub fn can_close(&self) -> bool {
+        !self.background.is_empty()
+    }
+
+    /// Closes the active document, promoting the most-recently-active background
+    /// document in its place and dropping the closed document's undo/redo entries. A
+    /// no-op if it is the only open document (spec/12 §12.12).
+    pub fn close_active(&mut self) {
+        if self.background.is_empty() {
+            return;
+        }
+        let closed_id = self.active.id;
+        let closed_name = self.active.display_name();
+        self.drop_history_of(closed_id);
+        self.active = self.background.remove(0);
+        self.status = Some(format!("Closed {closed_name}"));
+        self.discard_active_interaction();
     }
 
     /// Whether a Revert is possible: the document is file-bound and has unsaved edits.
@@ -1112,5 +1142,62 @@ mod tests {
 
         // Only the first document's entry was dropped; the second's survives.
         assert_eq!(state.undo_stack.len(), 1);
+    }
+
+    #[test]
+    fn closing_is_only_possible_with_another_document_open() {
+        let mut state = editable_state();
+        // A single document cannot be closed — the workspace keeps at least one.
+        assert!(!state.can_close());
+        state.open_document(loaded_starter(), PathBuf::from("/tmp/b.fontspace.json"));
+        assert!(state.can_close());
+    }
+
+    #[test]
+    fn closing_the_only_document_is_a_no_op() {
+        let mut state = editable_state();
+        let only_id = state.open_documents().next().unwrap().0.id;
+        state.close_active();
+        assert_eq!(state.open_document_count(), 1);
+        assert_eq!(state.open_documents().next().unwrap().0.id, only_id);
+    }
+
+    #[test]
+    fn closing_promotes_the_background_document_and_drops_its_undo_history() {
+        let mut state = editable_state();
+        let first_id = state.open_documents().next().unwrap().0.id;
+        state.begin_stroke((0, 0)); // an edit on the first document
+        state.commit_stroke();
+
+        // Open a second document and give it an edit; now two entries, b active.
+        state.open_document(loaded_starter(), PathBuf::from("/tmp/b.fontspace.json"));
+        let second_id = state.open_documents().next().unwrap().0.id;
+        state.begin_stroke((0, 0));
+        state.commit_stroke();
+        assert_eq!(state.undo_stack.len(), 2); // one entry per document
+
+        // Close the active (second) document: the first is promoted back to active,
+        // and only the closed document's undo entry is dropped.
+        state.close_active();
+        assert_eq!(state.open_document_count(), 1);
+        assert_eq!(state.open_documents().next().unwrap().0.id, first_id);
+        assert_eq!(state.undo_stack.len(), 1); // b's entry gone, a's survives
+        assert!(state.can_undo()); // a's edit is still undoable
+
+        // The closed document's id is truly gone.
+        assert!(state.document_mut_by_id(second_id).is_none());
+    }
+
+    #[test]
+    fn closing_a_dirty_document_arms_the_confirmation() {
+        let mut state = editable_state();
+        state.open_document(loaded_starter(), PathBuf::from("/tmp/b.fontspace.json"));
+        state.begin_stroke((0, 0)); // make the active document dirty
+        state.commit_stroke();
+
+        // A guarded Close on a dirty document does not proceed; it arms the modal.
+        assert!(!state.begin_guarded(GuardedIntent::Close));
+        assert_eq!(state.pending_discard(), Some(GuardedIntent::Close));
+        assert_eq!(state.open_document_count(), 2); // nothing closed yet
     }
 }
