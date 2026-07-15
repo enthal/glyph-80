@@ -30,7 +30,7 @@ use fontspace_model::{
 use uuid::Uuid;
 
 pub use error::JsonError;
-pub use file::{ReadError, read_document, write_document};
+pub use file::{ReadError, read_document, read_fragment, write_document, write_fragment};
 pub use fragment::{CURRENT_FRAGMENT_VERSION, load_fragment, save_fragment};
 
 use pixels::{RowError, format_code, format_rows, parse_code, parse_rows};

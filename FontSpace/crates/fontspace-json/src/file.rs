@@ -10,9 +10,9 @@ use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::{fs, io};
 
-use fontspace_model::FontSpace;
+use fontspace_model::{FontSpace, FontSpaceFragment};
 
-use crate::{JsonError, LoadOutcome, load, save};
+use crate::{JsonError, LoadOutcome, load, load_fragment, save, save_fragment};
 
 /// A failure reading a document file: either the filesystem read or the parse, each
 /// carrying the path so the caller can report which file was at fault.
@@ -46,26 +46,50 @@ pub fn read_document(path: &Path) -> Result<LoadOutcome, ReadError> {
     })
 }
 
-/// Writes `doc` to `path` as canonical JSON using atomic replacement (spec/16 §16.2):
-/// write a sibling `.tmp`, flush it to disk, then rename it over the destination. A
-/// failed or partial write leaves any existing file untouched — a crashed save never
-/// corrupts the user's document.
+/// Writes `doc` to `path` as canonical JSON using atomic replacement (spec/16 §16.2).
+/// A failed or partial write leaves any existing file untouched — a crashed save
+/// never corrupts the user's document.
 pub fn write_document(path: &Path, doc: &FontSpace) -> io::Result<()> {
-    let json = save(doc);
+    write_atomic(path, save(doc).as_bytes())
+}
 
+/// Reads `path` and parses it as a canonical fragment (spec/08 §8.5) — the on-disk
+/// form the CLI produces with [`write_fragment`]. A missing file or a malformed
+/// fragment is a [`ReadError`] naming the path.
+pub fn read_fragment(path: &Path) -> Result<FontSpaceFragment, ReadError> {
+    let text = fs::read_to_string(path).map_err(|source| ReadError::Io {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    load_fragment(&text).map_err(|source| ReadError::Parse {
+        path: path.to_path_buf(),
+        source,
+    })
+}
+
+/// Writes `fragment` to `path` as canonical fragment JSON (spec/08 §8.5) using the
+/// same atomic replacement as [`write_document`].
+pub fn write_fragment(path: &Path, fragment: &FontSpaceFragment) -> io::Result<()> {
+    write_atomic(path, save_fragment(fragment).as_bytes())
+}
+
+/// Atomic replacement (spec/16 §16.2): write a sibling `.tmp`, flush it to disk, then
+/// rename it over the destination. Shared by every canonical writer so the crash-safe
+/// guarantee lives in exactly one place.
+fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
     let mut tmp = path.as_os_str().to_owned();
     tmp.push(".tmp");
     let tmp = PathBuf::from(tmp);
 
     let mut file = fs::File::create(&tmp)?;
-    file.write_all(json.as_bytes())?;
+    file.write_all(bytes)?;
     // Flush to disk *before* the rename so the replaced file is never a half-written
     // temp promoted into place by a crash between write and fsync (spec/16 §16.2).
     file.sync_all()?;
     drop(file);
 
     // On a failed rename the original file is already safe (untouched); clean up the
-    // orphaned temp so a botched save doesn't litter a `.tmp` beside the document.
+    // orphaned temp so a botched save doesn't litter a `.tmp` beside the destination.
     if let Err(err) = fs::rename(&tmp, path) {
         let _ = fs::remove_file(&tmp);
         return Err(err);
@@ -164,6 +188,32 @@ mod tests {
         fs::write(&path, b"{ not valid json").unwrap();
         let err = read_document(&path).expect_err("bad json fails");
         assert!(matches!(err, ReadError::Parse { .. }));
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn fragment_write_then_read_round_trips() {
+        use fontspace_model::{Bitmap, FragmentGlyph, GlyphFragment, GlyphSize};
+        let path = std::env::temp_dir().join("fontspace-json-fragment-round-trip.json");
+        let _ = fs::remove_file(&path);
+        let size = GlyphSize::new(5, 3);
+        let mut bitmap = Bitmap::new_blank(size);
+        bitmap.set(0, 0, true).unwrap();
+        let fragment = FontSpaceFragment::Glyphs(GlyphFragment {
+            source_glyph_size: size,
+            glyphs: vec![FragmentGlyph {
+                code: 0x41,
+                label: "A".into(),
+                bitmap,
+            }],
+        });
+
+        write_fragment(&path, &fragment).expect("atomic fragment write succeeds");
+        let back = read_fragment(&path).expect("read back succeeds");
+        assert_eq!(back, fragment);
+        // The bytes on disk are exactly canonical fragment JSON.
+        assert_eq!(fs::read_to_string(&path).unwrap(), save_fragment(&fragment));
+
         let _ = fs::remove_file(&path);
     }
 }
