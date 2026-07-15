@@ -365,6 +365,16 @@ impl FontSpaceApp {
         }
     }
 
+    /// Opens `path` as the initial document at launch (from a command-line argument),
+    /// replacing the pristine starter in place rather than leaving a stray Untitled
+    /// document beside it. A failed read is reported in the status strip and leaves the
+    /// starter untouched (spec/16 §16.2), so a bad path still opens a usable window.
+    pub fn open_startup_file(&mut self, path: PathBuf) {
+        if let Some(outcome) = self.read_or_report(&path) {
+            self.state.load_document(outcome, path);
+        }
+    }
+
     fn open_via_dialog(&mut self) {
         let Some(path) = rfd::FileDialog::new()
             .add_filter("FontSpace document", &["json"])
@@ -608,5 +618,39 @@ mod tests {
         app.state.cancel_discard();
         assert_eq!(app.state.pending_discard(), None);
         assert!(app.state.is_dirty());
+    }
+
+    #[test]
+    fn open_startup_file_loads_the_document_in_place() {
+        // Save a document, then launch on that path: it becomes the active, file-bound,
+        // clean document — replacing the pristine starter, not left beside it.
+        let path = std::env::temp_dir().join(format!(
+            "fontspace-startup-{}.fontspace.json",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&path);
+        let saved = FontSpaceApp::default();
+        fontspace_json::write_document(&path, saved.state.document()).unwrap();
+
+        let mut app = FontSpaceApp::default();
+        app.open_startup_file(path.clone());
+        assert_eq!(app.state.path(), Some(path.as_path()));
+        assert!(!app.state.is_dirty());
+        assert_eq!(app.state.open_document_count(), 1); // replaced starter, not added
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn open_startup_file_with_a_bad_path_keeps_a_usable_starter() {
+        let mut app = FontSpaceApp::default();
+        let missing = std::env::temp_dir().join("fontspace-startup-missing.fontspace.json");
+        let _ = std::fs::remove_file(&missing);
+
+        app.open_startup_file(missing);
+        // The failed read leaves the unsaved starter intact and surfaces an error.
+        assert_eq!(app.state.open_document_count(), 1);
+        assert!(app.state.path().is_none());
+        assert!(app.state.status().is_some());
     }
 }
