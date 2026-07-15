@@ -16,6 +16,7 @@
 
 mod error;
 pub mod file;
+mod fragment;
 mod pixels;
 mod storage;
 
@@ -30,6 +31,7 @@ use uuid::Uuid;
 
 pub use error::JsonError;
 pub use file::{ReadError, read_document, write_document};
+pub use fragment::{CURRENT_FRAGMENT_VERSION, load_fragment, save_fragment};
 
 use pixels::{RowError, format_code, format_rows, parse_code, parse_rows};
 use storage::*;
@@ -395,14 +397,14 @@ fn parse_uuid(context: &str, value: &str) -> Result<Uuid, JsonError> {
     })
 }
 
-fn parse_code_in(context: &str, value: &str) -> Result<u32, JsonError> {
+pub(crate) fn parse_code_in(context: &str, value: &str) -> Result<u32, JsonError> {
     parse_code(value).ok_or_else(|| JsonError::InvalidCode {
         context: context.to_string(),
         value: value.to_string(),
     })
 }
 
-fn row_error_to_json(err: RowError, context: String) -> JsonError {
+pub(crate) fn row_error_to_json(err: RowError, context: String) -> JsonError {
     match err {
         RowError::RowCount { expected, found } => JsonError::RowCount {
             context,

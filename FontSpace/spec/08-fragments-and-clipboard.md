@@ -85,3 +85,24 @@ When pasting a glyph set into another document, its character-set dependency mus
 - copy an export config between files;
 - copy only an address map or data map between configs;
 - compare equivalent characters across files without copying (chapter 12 §comparison view).
+
+## 8.5 Fragment JSON
+
+The authoritative clipboard representation (§8.2) and the on-disk form the CLI reads and writes is canonical JSON, produced by `fontspace-json` (`save_fragment`/`load_fragment`). It follows the **same** conventions and determinism contract as document JSON (spec/06): explicit storage structs fix field order, `code`s are lowercase `0x` hex, bitmaps are `.`/`#` visual rows, indentation is two spaces, and there is exactly one trailing newline. The contract is `save_fragment(load_fragment(save_fragment(f))) == save_fragment(f)`, byte-for-byte.
+
+A fragment is tagged by a `fragment_version` (migrated independently of the document `format_version`) and a `kind` that dispatches the variant. The glyph fragment (`kind: "glyphs"`) is:
+
+```json
+{
+  "fragment_version": 1,
+  "kind": "glyphs",
+  "source_glyph_size": { "width": 5, "height": 3 },
+  "glyphs": [
+    { "code": "0x41", "label": "LATIN CAPITAL A", "pixels": [".###.", "#...#", "#####"] }
+  ]
+}
+```
+
+Each glyph carries exactly `source_glyph_size.height` `pixels` rows, each exactly `width` characters — here a 5×3 `A`.
+
+On load, an unsupported `fragment_version` or an unknown `kind` is rejected; the `source_glyph_size` is validated (spec/03 §3.4); and every glyph's `pixels` must match that geometry, so the `GlyphFragment` per-glyph size invariant (§8.1) holds by construction. Loading never guesses — a malformed fragment is a clear error, not a coerced value. The `Pages`, `Objects`, and `ExportComponents` kinds arrive with their fragment variants.
