@@ -3,8 +3,6 @@
 //! across platforms (the identity strings, the embedded icon) plus, in later slices,
 //! the `cfg`-gated Linux desktop-entry install and macOS menu presenter.
 
-use std::sync::Arc;
-
 /// The one reverse-DNS **desktop identity** (spec/18 §18.1): the Wayland/X11
 /// `app_id`, the basename of the Linux `.desktop` and icon files, the `.desktop`
 /// `Icon=` value, `StartupWMClass`, and — once packaging lands (§18.8) — the packager
@@ -39,7 +37,8 @@ pub fn viewport() -> egui::ViewportBuilder {
         .with_app_id(APP_ID)
         .with_inner_size([1200.0, 800.0]);
     if let Some(icon) = app_icon() {
-        builder = builder.with_icon(Arc::new(icon));
+        // `with_icon` takes `impl Into<Arc<IconData>>`; `IconData` converts directly.
+        builder = builder.with_icon(icon);
     }
     builder
 }
