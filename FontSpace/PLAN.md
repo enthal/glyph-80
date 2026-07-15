@@ -68,7 +68,7 @@ Goal: many files open; copy/move across them; session restore. (Criteria 2, 12, 
 
 Steps:
 
-- [ ] `OpenDocument`/`DocumentId`; multiple documents; document browser tree ([spec/11](spec/11-workspace.md), [spec/12](spec/12-gui.md) §12.2).
+- [x] `OpenDocument`/`DocumentId`; multiple documents; document browser tree ([spec/11](spec/11-workspace.md), [spec/12](spec/12-gui.md) §12.2). Workspace document types + per-document selection and `DocumentId`-tagged workspace undo ([#26](https://github.com/enthal/glyph-80/pull/26)); document browser tree of character sets / glyph sets / pages ([#27](https://github.com/enthal/glyph-80/pull/27)); multiple open documents with Open-as-new-document and browser switching ([#29](https://github.com/enthal/glyph-80/pull/29)); Close (Cmd/Ctrl+W, promotes the next document, guarded when dirty — [spec/12](spec/12-gui.md) §12.12) ([#30](https://github.com/enthal/glyph-80/pull/30)).
 - [ ] Fragments + `extract`/`paste` ops with explicit `GlyphMapping`/`PageMapping`/`GlyphSizeConversion` ([spec/08](spec/08-fragments-and-clipboard.md)).
 - [ ] Clipboard integration (custom fragment MIME + `text/plain` + `image/png`); cross-instance paste.
 - [ ] Cross-document `WorkspaceTransaction` (move A→B undoes both sides).
