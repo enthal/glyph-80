@@ -48,6 +48,8 @@ image/png                               (rendered preview)
 
 A receiving FontSpace instance prefers the custom fragment type. Cross-instance rich paste depends on it; a `text/plain` paste is best-effort and loses geometry and dependency metadata. Clipboard integration lives only in `fontspace-egui`; the core produces the fragment and the rendered bytes.
 
+The formats land incrementally. The first slice puts the **canonical fragment JSON** (§8.5) on the clipboard as `text/plain` and reads it back on paste — so the fragment JSON is *itself* the lossy-fallback text for now, and cross-instance paste already works between FontSpace windows. The glyph editor uses this for `Cmd/Ctrl+C`/`V` (§12.5): copy serializes the selected glyph; paste applies a clipboard fragment onto the current selection (`SequentialFromCode` onto the selected code, `RequireExact`). The dedicated `application/x-fontspace-fragment+json` MIME type, the human-readable visual-grid `text/plain`, and the `image/png` preview follow, as does copy/paste from the multi-glyph views.
+
 ## 8.3 Paste policies — never guess silently
 
 ```rust
