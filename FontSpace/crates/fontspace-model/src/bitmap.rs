@@ -226,6 +226,24 @@ pub fn placed(src: &Bitmap, dest_size: GlyphSize, off_x: i32, off_y: i32) -> Bit
     })
 }
 
+/// `src` **nearest-neighbor** resampled to `dest_size` — the one resizing paste
+/// conversion (spec/08 §8.3). Each destination cell samples the single source pixel
+/// its position maps to (`sx = dx * src_w / dest_w`, floored), so up- and down-scaling
+/// need no interpolation and stay binary. A zero-sized source yields a blank result.
+pub fn scaled_nearest(src: &Bitmap, dest_size: GlyphSize) -> Bitmap {
+    let (sw, sh) = (src.width as u32, src.height as u32);
+    if sw == 0 || sh == 0 {
+        return Bitmap::new_blank(dest_size);
+    }
+    let (dw, dh) = (dest_size.width as u32, dest_size.height as u32);
+    Bitmap::from_fn(dest_size, |dx, dy| {
+        // In-bounds by construction: `dx < dw` ⇒ `dx * sw / dw < sw` (likewise y).
+        let sx = (dx as u32 * sw / dw) as u16;
+        let sy = (dy as u32 * sh / dh) as u16;
+        src.get_bit(sx, sy)
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -439,6 +457,40 @@ mod tests {
         src.set(0, 2, true).unwrap();
         src.set(2, 0, true).unwrap();
         assert_eq!(placed(&src, src.size(), 0, 0), src);
+    }
+
+    #[test]
+    fn scaled_nearest_doubles_each_pixel_when_upscaling() {
+        // 2×2 → 4×4: the top-left source pixel expands to the 2×2 block (0,0)-(1,1).
+        let mut src = blank(2, 2);
+        src.set(0, 0, true).unwrap();
+        let out = scaled_nearest(&src, GlyphSize::new(4, 4));
+        assert_eq!(out.size(), GlyphSize::new(4, 4));
+        for (x, y) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
+            assert!(out.get(x, y).unwrap(), "block cell ({x},{y})");
+        }
+        assert_eq!(out.count_on(), 4);
+    }
+
+    #[test]
+    fn scaled_nearest_samples_every_other_pixel_when_downscaling() {
+        // 4×4 → 2×2: destination (dx,dy) samples source (2*dx, 2*dy).
+        let mut src = blank(4, 4);
+        src.set(0, 0, true).unwrap(); // → dest (0,0)
+        src.set(2, 2, true).unwrap(); // → dest (1,1)
+        src.set(1, 1, true).unwrap(); // not sampled (odd coords dropped)
+        let out = scaled_nearest(&src, GlyphSize::new(2, 2));
+        assert!(out.get(0, 0).unwrap());
+        assert!(out.get(1, 1).unwrap());
+        assert_eq!(out.count_on(), 2);
+    }
+
+    #[test]
+    fn scaled_nearest_to_the_same_size_is_identity() {
+        let mut src = blank(3, 3);
+        src.set(0, 2, true).unwrap();
+        src.set(2, 0, true).unwrap();
+        assert_eq!(scaled_nearest(&src, src.size()), src);
     }
 
     #[test]

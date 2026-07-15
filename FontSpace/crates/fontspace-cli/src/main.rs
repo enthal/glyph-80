@@ -153,7 +153,8 @@ enum Command {
         /// `by-code` (default) or `sequential-from-code:CODE` (spec/08 §8.3).
         #[arg(long, default_value = "by-code")]
         mapping: String,
-        /// `require-exact` (default), `center`, or `place-at:X,Y` (spec/08 §8.3).
+        /// `require-exact` (default), `center`, `scale-nearest`, or `place-at:X,Y`
+        /// (spec/08 §8.3).
         #[arg(long, default_value = "require-exact")]
         size: String,
     },

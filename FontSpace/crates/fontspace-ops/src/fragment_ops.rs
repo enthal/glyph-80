@@ -11,6 +11,7 @@
 
 use fontspace_model::{
     Bitmap, FontSpace, FragmentGlyph, GlyphFragment, GlyphSetId, GlyphSize, PageId, placed,
+    scaled_nearest,
 };
 
 use crate::apply_change_set;
@@ -31,8 +32,8 @@ pub enum GlyphMapping {
 /// How a size difference between the fragment and the destination geometry is
 /// resolved (spec/08 §8.3). The default `RequireExact` never resizes. `PlaceAt` and
 /// `Center` are lossless placements (no resampling): the source pixels are copied
-/// into a blank destination-size glyph, clipping whatever falls outside. `Crop` and
-/// `ScaleNearest` arrive with a later slice.
+/// into a blank destination-size glyph, clipping whatever falls outside.
+/// `ScaleNearest` is the one resampling option. `Crop` arrives with a later slice.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum GlyphSizeConversion {
     /// Refuse any geometry difference — the safe default (spec/08 §8.3).
@@ -45,6 +46,9 @@ pub enum GlyphSizeConversion {
     /// symmetrically when the source is larger). Odd differences floor toward the
     /// top-left.
     Center,
+    /// Nearest-neighbor resample the source to the destination geometry — the only
+    /// conversion that changes pixel content (spec/08 §8.3).
+    ScaleNearest,
 }
 
 /// A request to copy glyphs off one page into a fragment.
@@ -232,6 +236,7 @@ fn convert_bitmap(src: &Bitmap, target_size: GlyphSize, conversion: GlyphSizeCon
             let off_y = (target_size.height as i32 - src.height() as i32) / 2;
             placed(src, target_size, off_x, off_y)
         }
+        GlyphSizeConversion::ScaleNearest => scaled_nearest(src, target_size),
     }
 }
 
@@ -564,6 +569,42 @@ mod tests {
         assert!(bitmap.get(0, 0).unwrap());
         assert!(bitmap.get(1, 1).unwrap());
         assert_eq!(bitmap.count_on(), 2); // the outer ring was cropped
+    }
+
+    #[test]
+    fn paste_scale_nearest_resamples_to_the_destination() {
+        // Source 2×2 with (0,0) on; destination 4×4. Nearest scaling doubles the lone
+        // pixel into the top-left 2×2 block.
+        let mut src = fixture(GlyphSize::new(2, 2), &[0x41]);
+        draw(&mut src, 0x41, 0, 0);
+        let fragment = extract_glyphs(
+            &src.doc,
+            &ExtractGlyphs {
+                glyph_set_id: src.glyph_set_id,
+                page_id: src.page_id,
+                glyphs: GlyphSelector::All,
+            },
+        )
+        .unwrap();
+
+        let mut dst = fixture(GlyphSize::new(4, 4), &[0x41]);
+        paste_glyphs(
+            &mut dst.doc,
+            &PasteGlyphs {
+                fragment,
+                target_glyph_set_id: dst.glyph_set_id,
+                target_page_id: dst.page_id,
+                mapping: GlyphMapping::ByCode,
+                size_conversion: GlyphSizeConversion::ScaleNearest,
+            },
+        )
+        .unwrap();
+
+        let bitmap = stored_bitmap(&dst, 0x41);
+        assert_eq!(bitmap.size(), GlyphSize::new(4, 4));
+        assert_eq!(bitmap.count_on(), 4); // 2×2 block
+        assert!(bitmap.get(0, 0).unwrap());
+        assert!(bitmap.get(1, 1).unwrap());
     }
 
     #[test]

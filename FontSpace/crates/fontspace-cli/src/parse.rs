@@ -97,8 +97,8 @@ pub fn parse_glyph_mapping(spec: &str) -> Result<GlyphMapping, ParseError> {
 }
 
 /// Parses a paste size conversion (spec/08 §8.3): `require-exact` (the default),
-/// `center`, or `place-at:X,Y` where X and Y are signed pixel offsets. `crop` and
-/// `scale-nearest` arrive with a later slice.
+/// `center`, `scale-nearest`, or `place-at:X,Y` where X and Y are signed pixel
+/// offsets. `crop` arrives with a later slice.
 pub fn parse_size_conversion(spec: &str) -> Result<GlyphSizeConversion, ParseError> {
     let spec = spec.trim();
     if spec.eq_ignore_ascii_case("require-exact") {
@@ -106,6 +106,9 @@ pub fn parse_size_conversion(spec: &str) -> Result<GlyphSizeConversion, ParseErr
     }
     if spec.eq_ignore_ascii_case("center") {
         return Ok(GlyphSizeConversion::Center);
+    }
+    if spec.eq_ignore_ascii_case("scale-nearest") {
+        return Ok(GlyphSizeConversion::ScaleNearest);
     }
     if let Some(offsets) = spec.strip_prefix("place-at:")
         && let Some((x, y)) = offsets.split_once(',')
@@ -441,6 +444,10 @@ mod tests {
         assert_eq!(
             parse_size_conversion("center").unwrap(),
             GlyphSizeConversion::Center
+        );
+        assert_eq!(
+            parse_size_conversion("scale-nearest").unwrap(),
+            GlyphSizeConversion::ScaleNearest
         );
         assert_eq!(
             parse_size_conversion("place-at:2,3").unwrap(),
