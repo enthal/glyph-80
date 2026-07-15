@@ -5,7 +5,10 @@
 Every operation has a typed Rust request and result. A generic command dispatcher may wrap them, but the enum dispatcher is never the only API.
 
 ```rust
-pub fn shift_glyphs(doc: &mut FontSpace, req: &ShiftGlyphs, ids: &mut dyn IdGen)
+pub fn shift_glyphs(doc: &mut FontSpace, req: &ShiftGlyphs)
+    -> Result<ChangeSet, FontSpaceError>;
+
+pub fn add_page(doc: &mut FontSpace, req: &AddPage, ids: &mut dyn IdGen)
     -> Result<ChangeSet, FontSpaceError>;
 
 pub fn extract_fragment(doc: &FontSpace, req: &ExtractFragment)
@@ -15,7 +18,7 @@ pub fn render_text_grid(doc: &FontSpace, req: &TextGridRequest)
     -> Result<String, FontSpaceError>;
 ```
 
-Any operation that mints IDs takes `&mut dyn IdGen` (chapter 3). Queries never mutate and take `&FontSpace`.
+Any operation that mints IDs takes `&mut dyn IdGen` (chapter 3) — `add_page` does, `shift_glyphs` (which only transforms existing bitmaps) does not. Queries never mutate and take `&FontSpace`.
 
 ## 7.2 Commands and queries
 
