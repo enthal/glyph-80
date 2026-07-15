@@ -296,12 +296,17 @@ impl FontSpaceApp {
         }
     }
 
-    /// Writes the selected glyph to the system clipboard as fragment JSON (spec/08
-    /// §8.2). Shared by the `Cmd/Ctrl+C` handler and the Edit ▸ Copy glyph menu item.
+    /// Writes the current glyph selection to the system clipboard as fragment JSON: the
+    /// page-overview range when one is drag-selected (spec/12 §12.8), otherwise the
+    /// single selected glyph (spec/08 §8.2). Shared by the `Cmd/Ctrl+C` handler and the
+    /// Edit ▸ Copy glyph menu item.
     fn copy_selected_glyph(&mut self, ctx: &egui::Context) {
-        if let Some(fragment) = self.state.copy_selected_glyph() {
+        let count = self.state.page_glyph_selection().len().max(1);
+        if let Some(fragment) = self.state.copy_glyphs_for_clipboard() {
             ctx.copy_text(fragment);
-            self.state.set_status("Copied glyph to clipboard");
+            let plural = if count == 1 { "" } else { "s" };
+            self.state
+                .set_status(format!("Copied {count} glyph{plural} to clipboard"));
         }
     }
 
