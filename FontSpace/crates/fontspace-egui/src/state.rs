@@ -357,12 +357,14 @@ impl AppState {
 
     /// Blanks every stored glyph in the page-overview run as one undo entry (spec/12
     /// §12.8), reusing the `ClearGlyphs` batch op. Absent glyphs are left untouched
-    /// (not materialized); a no-op when the run is empty or all dangling.
-    pub fn blank_page_selection(&mut self) {
+    /// (not materialized). Returns how many in-charset codes the run targeted (`0` when
+    /// the run is empty or all dangling — a no-op), for the caller's status line.
+    pub fn blank_page_selection(&mut self) -> usize {
         let codes = self.charset_codes_in_page_selection();
         if codes.is_empty() {
-            return;
+            return 0;
         }
+        let count = codes.len();
         let request = ClearGlyphs {
             glyph_set_id: self.active.selection.glyph_set_id,
             pages: PageSelector::Id(self.active.selection.page_id),
@@ -371,17 +373,20 @@ impl AppState {
         if let Ok(change_set) = clear_glyphs(&mut self.active.content, &request) {
             self.record(change_set);
         }
+        count
     }
 
     /// Inverts (toggles every pixel of) each stored glyph in the page-overview run as
     /// one undo entry (spec/12 §12.8), reusing the `InvertGlyphs` batch op. Absent
     /// glyphs are left untouched — invert does not fill blank codes with all-on glyphs
-    /// (spec/07 §7.5). A no-op when the run is empty or all dangling.
-    pub fn invert_page_selection(&mut self) {
+    /// (spec/07 §7.5). Returns how many in-charset codes the run targeted (`0` on a
+    /// no-op), for the caller's status line.
+    pub fn invert_page_selection(&mut self) -> usize {
         let codes = self.charset_codes_in_page_selection();
         if codes.is_empty() {
-            return;
+            return 0;
         }
+        let count = codes.len();
         let request = InvertGlyphs {
             glyph_set_id: self.active.selection.glyph_set_id,
             pages: PageSelector::Id(self.active.selection.page_id),
@@ -390,6 +395,7 @@ impl AppState {
         if let Ok(change_set) = invert_glyphs(&mut self.active.content, &request) {
             self.record(change_set);
         }
+        count
     }
 
     /// Mirrors the selected region in place (`dir`) as one undo entry — the "reverse"
