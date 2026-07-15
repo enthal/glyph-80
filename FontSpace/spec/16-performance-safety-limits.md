@@ -6,7 +6,7 @@ Documents are typically small. Optimize primarily for correctness and clarity. S
 
 ## 16.2 File safety
 
-Every document save uses atomic replacement: `path.tmp` → write → flush → rename over the destination. A failed load or migration must **never** silently overwrite the user's file. Optional backup/recovery may be layered on top.
+Every document save uses atomic replacement: `path.tmp` → write → flush → rename over the destination. A failed load or migration must **never** silently overwrite the user's file. Optional backup/recovery may be layered on top. This atomic read/write is provided once by `fontspace-json` (`read_document` / `write_document`, over the canonical `save`/`load`) and used by both the CLI and the GUI, so the guarantee lives in exactly one place.
 
 ## 16.3 Workspace safety
 

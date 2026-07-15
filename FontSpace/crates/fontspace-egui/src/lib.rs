@@ -22,4 +22,4 @@ pub mod text_preview;
 
 pub use app::FontSpaceApp;
 pub use layout::{Pane, default_tree, panes_in};
-pub use state::{AppState, Selection};
+pub use state::{AppState, GuardedIntent, Selection};

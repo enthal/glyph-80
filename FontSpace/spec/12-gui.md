@@ -72,6 +72,9 @@ Delete            clear selection
 Cmd/Ctrl+C / V    copy / paste
 Cmd/Ctrl+Z        undo
 Cmd/Ctrl+Shift+Z  redo
+Cmd/Ctrl+O        open
+Cmd/Ctrl+S        save
+Cmd/Ctrl+Shift+S  save as
 [ and ]           previous / next character (by charset order)
 Shift+[ and ]     previous / next page
 ```
@@ -107,3 +110,5 @@ Selection-driven. **Glyph:** file, glyph set, page, `code`, label, geometry, on-
 `File · Edit · View · Character Set · Glyph · Page · Export · Window · Help`. Core file actions: New, Open, Open Recent, Save, Save As, Close, Revert, Export, Recover Unsaved Work.
 
 The menu bar is defined **once** as a command tree and rendered by two presenters — a native macOS `NSMenu` (all top-level menus, not just the app menu) and an in-window `egui` menu bar on Linux/Windows. See [18-platform-support.md](18-platform-support.md) §18.3–18.4 for the registry, the macOS install timing/lifetime caveats, and how accelerators stay in sync with §12.5.
+
+**Single-document file behavior (Milestone 2).** Before the multi-document workspace (chapter 11) lands, the GUI edits one document with a bound file path (`None` until first saved) and a per-document `dirty` flag. **Save** writes canonically via atomic replacement ([16-performance-safety-limits.md](16-performance-safety-limits.md) §16.2), falling back to **Save As** when the document has never been saved; **Save As** chooses a new path and rebinds the document; **Revert** reloads it from its file on disk. The document name and its unsaved-changes state are shown both in the OS window title and as an in-bar marker (`dirty` from chapter 11). Any action that would replace the current document — **Open**, **Revert** — first confirms when there are unsaved changes, so edits are never discarded silently; a failed load leaves the current document untouched (§16.2). The `dirty` flag is conservative: it stays set after undoing back to the last-saved state, which at worst asks for an unneeded confirmation and never risks silent loss. The default accelerators are `Cmd/Ctrl+O` (Open), `Cmd/Ctrl+S` (Save), and `Cmd/Ctrl+Shift+S` (Save As), per §12.5. `New`, `Open Recent`, `Close`, and `Recover Unsaved Work` arrive with the workspace and recovery slices (chapter 11).

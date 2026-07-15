@@ -15,7 +15,7 @@ fontspace-render    Text-grid rendering; image rendering; text-preview projectio
 fontspace-export    Export configs' evaluation: address/data decoding, logical memory-image
                     generation, 1:1 coverage validation, output encoders.
 
-fontspace-json      Stable JSON schema; load/save; canonical formatting; versioned migration.
+fontspace-json      Stable JSON schema; load/save; atomic file read/write; canonical formatting; versioned migration.
 
 fontspace-egui      Application shell; egui_tiles workspace; views and inspectors;
                     input-gesture translation; clipboard and dialog integration.

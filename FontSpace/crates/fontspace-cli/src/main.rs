@@ -373,14 +373,10 @@ fn load_document(path: &Path) -> Result<FontSpace, CliError> {
     Ok(outcome.document)
 }
 
-/// Writes canonical JSON atomically: write a sibling `.tmp`, then rename over the
-/// destination — a failed write never corrupts the original (spec/16 §16.2).
+/// Writes canonical JSON atomically (write `.tmp`, flush, rename over the
+/// destination). Delegates to [`fontspace_json::write_document`] — the single home
+/// for the atomic-replacement guarantee (spec/16 §16.2).
 fn write_document(path: &Path, doc: &FontSpace) -> Result<(), CliError> {
-    let json = save_json(doc);
-    let mut tmp = path.as_os_str().to_owned();
-    tmp.push(".tmp");
-    let tmp = PathBuf::from(tmp);
-    fs::write(&tmp, json.as_bytes())?;
-    fs::rename(&tmp, path)?;
+    fontspace_json::write_document(path, doc)?;
     Ok(())
 }
