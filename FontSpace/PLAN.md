@@ -84,7 +84,7 @@ Goal: the visualization features that make it a design tool. (Criterion 10; deep
 Steps:
 
 - [ ] Character-across-pages/files comparison tile: synchronized zoom, source labels, overlay/difference, copy-across ([spec/12](spec/12-gui.md) §12.9).
-- [ ] Page-overview selection operations (shift/clear/invert on a range); range copy/paste.
+- [ ] Page-overview selection operations (shift/clear/invert on a range); range copy/paste. _Landed early alongside the M3 clipboard work:_ drag-select a run of codes + multi-glyph copy ([#48](https://github.com/enthal/glyph-80/pull/48)); Blank/Invert on the run ([#49](https://github.com/enthal/glyph-80/pull/49)); Shift the run ([#50](https://github.com/enthal/glyph-80/pull/50)). Still to come: a `ByCode` paste-onto-page and auto/fixed thumbnail sizing.
 - [ ] Text-preview presets and multi-page mode; missing-glyph policy.
 - [ ] Inspector for glyph/page (export inspector arrives with M5).
 - [ ] **Menu system** ([spec/18](spec/18-platform-support.md) §18.3–18.4): the one command-registry tree; the in-window `egui` presenter; the native macOS `NSMenu` presenter (`muda`) with winit default-menu suppression, creator-callback install timing, `Box::leak` lifetime, and `MenuEvent` routing for the full menu bar; keyboard bindings kept in sync with the native accelerators; "focus glyph editor"; named-layout groundwork.
