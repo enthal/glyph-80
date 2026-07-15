@@ -6,7 +6,7 @@
 //! these edits into a `SetPixels` domain op, so the document is only ever mutated
 //! through `fontspace-ops` (the one architectural rule).
 
-use fontspace_model::Bitmap;
+use fontspace_model::{Bitmap, GlyphSize};
 use fontspace_ops::PixelEdit;
 
 /// A rectangular selection of glyph cells, **inclusive** of both corners.
@@ -65,6 +65,43 @@ pub fn flip_edits(bitmap: &Bitmap, rect: PixelRect, dir: FlipDir) -> Vec<PixelEd
                 y,
                 value: bitmap.get(sx, sy).unwrap_or(false),
             });
+        }
+    }
+    edits
+}
+
+/// Copies the pixels inside `rect` into a fresh `rect.width()`×`rect.height()` bitmap
+/// — the region clipboard for copy/paste (spec/12 §12.4).
+pub fn region_extract(bitmap: &Bitmap, rect: PixelRect) -> Bitmap {
+    let mut out = Bitmap::new_blank(GlyphSize::new(rect.width(), rect.height()));
+    for (dy, y) in (rect.y0..=rect.y1).enumerate() {
+        for (dx, x) in (rect.x0..=rect.x1).enumerate() {
+            if bitmap.get(x, y).unwrap_or(false) {
+                // dx/dy are < rect dims, so in bounds for `out`.
+                let _ = out.set(dx as u16, dy as u16, true);
+            }
+        }
+    }
+    out
+}
+
+/// The `SetPixels` edits that stamp `patch` into a `glyph`-sized bitmap with its
+/// top-left at `origin`, **replacing** the destination cells (on *and* off) so the
+/// whole patch rectangle is placed. Cells falling outside the glyph are clipped
+/// (spec/12 §12.4). Reads only `patch`, so the edit list is a consistent stamp.
+pub fn stamp_edits(patch: &Bitmap, origin: (u16, u16), glyph: GlyphSize) -> Vec<PixelEdit> {
+    let mut edits = Vec::with_capacity(patch.width() as usize * patch.height() as usize);
+    for py in 0..patch.height() {
+        for px in 0..patch.width() {
+            let x = origin.0 as u32 + px as u32;
+            let y = origin.1 as u32 + py as u32;
+            if x < glyph.width as u32 && y < glyph.height as u32 {
+                edits.push(PixelEdit {
+                    x: x as u16,
+                    y: y as u16,
+                    value: patch.get(px, py).unwrap_or(false),
+                });
+            }
         }
     }
     edits
@@ -135,5 +172,46 @@ mod tests {
         let once = apply(&src, &flip_edits(&src, rect, FlipDir::LeftRight));
         let twice = apply(&once, &flip_edits(&once, rect, FlipDir::LeftRight));
         assert_eq!(twice, src);
+    }
+
+    #[test]
+    fn region_extract_copies_the_subrect_to_local_coords() {
+        // 4×4 with (1,2) and (2,1) on; extract [1..2]×[1..2] → a 2×2 patch.
+        let src = bitmap_with(4, &[(1, 2), (2, 1), (3, 3)]);
+        let patch = region_extract(&src, PixelRect::from_corners((1, 1), (2, 2)));
+        assert_eq!(patch.size(), GlyphSize::new(2, 2));
+        assert!(patch.get(0, 1).unwrap()); // (1,2) -> local (0,1)
+        assert!(patch.get(1, 0).unwrap()); // (2,1) -> local (1,0)
+        assert_eq!(patch.count_on(), 2); // (3,3) is outside the rect
+    }
+
+    #[test]
+    fn stamp_edits_replaces_the_destination() {
+        // A 2×2 patch with only (0,0) on, stamped at (2,2) in an 8×8: it *replaces*
+        // the 2×2 destination, so a previously-on cell under an off patch cell clears.
+        let mut patch = Bitmap::new_blank(GlyphSize::new(2, 2));
+        patch.set(0, 0, true).unwrap();
+        let base = bitmap_with(8, &[(2, 2), (3, 3)]);
+        let out = apply(&base, &stamp_edits(&patch, (2, 2), GlyphSize::new(8, 8)));
+        assert!(out.get(2, 2).unwrap()); // patch (0,0) on
+        assert!(!out.get(3, 3).unwrap()); // patch (1,1) off replaced the on pixel
+        assert_eq!(out.count_on(), 1);
+    }
+
+    #[test]
+    fn stamp_edits_clips_at_the_glyph_edge() {
+        // A 3×3 diagonal patch stamped at (2,2) of a 4×4 glyph: (0,0)->(2,2) and
+        // (1,1)->(3,3) land; (2,2)->(4,4) is clipped away.
+        let mut patch = Bitmap::new_blank(GlyphSize::new(3, 3));
+        for i in 0..3 {
+            patch.set(i, i, true).unwrap();
+        }
+        let out = apply(
+            &Bitmap::new_blank(GlyphSize::new(4, 4)),
+            &stamp_edits(&patch, (2, 2), GlyphSize::new(4, 4)),
+        );
+        assert!(out.get(2, 2).unwrap());
+        assert!(out.get(3, 3).unwrap());
+        assert_eq!(out.count_on(), 2);
     }
 }
