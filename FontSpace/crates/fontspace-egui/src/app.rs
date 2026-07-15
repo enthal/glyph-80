@@ -243,11 +243,10 @@ impl FontSpaceApp {
     // write lives in `fontspace_json`. Dialogs run only on user action, never in
     // tests, so this layer stays free of headless concerns. ---
 
-    /// Open: guard unsaved changes, then (once cleared) pick and load a file.
+    /// Open: pick a file and open it as a new document. No unsaved-changes guard — the
+    /// current document is kept (it moves to the background), nothing is discarded.
     fn action_open(&mut self) {
-        if self.state.begin_guarded(GuardedIntent::Open) {
-            self.open_via_dialog();
-        }
+        self.open_via_dialog();
     }
 
     /// Save: write to the bound file, or fall back to Save As when never saved.
@@ -283,10 +282,9 @@ impl FontSpaceApp {
         }
     }
 
-    /// Runs a confirmed document-replacing action (the user chose "Discard").
+    /// Runs a confirmed discard action (the user chose "Discard" in the guard modal).
     fn perform_guarded(&mut self, intent: GuardedIntent) {
         match intent {
-            GuardedIntent::Open => self.open_via_dialog(),
             GuardedIntent::Revert => self.do_revert(),
         }
     }
@@ -298,21 +296,29 @@ impl FontSpaceApp {
         else {
             return; // dialog cancelled
         };
-        self.load_path(path);
-    }
-
-    fn do_revert(&mut self) {
-        if let Some(path) = self.state.path().map(Path::to_path_buf) {
-            self.load_path(path);
+        if let Some(outcome) = self.read_or_report(&path) {
+            self.state.open_document(outcome, path);
         }
     }
 
-    /// Reads `path` and replaces the document, or reports the failure in the status
-    /// strip (a failed load never disturbs the current document — spec/16 §16.2).
-    fn load_path(&mut self, path: PathBuf) {
-        match fontspace_json::read_document(&path) {
-            Ok(outcome) => self.state.load_document(outcome, path),
-            Err(err) => self.state.set_error(err.to_string()),
+    fn do_revert(&mut self) {
+        let Some(path) = self.state.path().map(Path::to_path_buf) else {
+            return;
+        };
+        if let Some(outcome) = self.read_or_report(&path) {
+            self.state.load_document(outcome, path);
+        }
+    }
+
+    /// Reads a document file, reporting any failure in the status strip and returning
+    /// `None` (a failed load never disturbs the open documents — spec/16 §16.2).
+    fn read_or_report(&mut self, path: &Path) -> Option<fontspace_json::LoadOutcome> {
+        match fontspace_json::read_document(path) {
+            Ok(outcome) => Some(outcome),
+            Err(err) => {
+                self.state.set_error(err.to_string());
+                None
+            }
         }
     }
 
@@ -473,17 +479,20 @@ mod tests {
     }
 
     #[test]
-    fn open_on_a_dirty_document_arms_the_confirmation_instead_of_opening() {
-        // On a dirty document the guard must fire *before* any file dialog, so calling
-        // the action is safe (and testable) headlessly: no dialog, just a pending
-        // intent. (A clean document would proceed straight to the native picker.)
+    fn revert_on_a_dirty_document_arms_the_confirmation() {
+        // Revert discards the active document's edits, so a dirty, file-bound document
+        // must confirm before reloading — and the guard fires *before* any disk access,
+        // so calling the action is safe (and testable) headlessly. (Open, by contrast,
+        // opens a new document and is unguarded.)
         let mut app = FontSpaceApp::default();
+        app.state
+            .mark_saved(std::path::PathBuf::from("/tmp/demo.fontspace.json"));
         app.state.begin_stroke((0, 0));
         app.state.commit_stroke();
-        assert!(app.state.is_dirty());
+        assert!(app.state.can_revert());
 
-        app.action_open();
-        assert_eq!(app.state.pending_discard(), Some(GuardedIntent::Open));
+        app.action_revert();
+        assert_eq!(app.state.pending_discard(), Some(GuardedIntent::Revert));
 
         // Cancelling keeps the (still dirty) document.
         app.state.cancel_discard();

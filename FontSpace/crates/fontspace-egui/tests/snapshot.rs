@@ -133,12 +133,13 @@ fn dirty_titlebar_and_status_strip() {
 
 #[test]
 fn discard_confirm_modal() {
-    // A dirty document with an Open action pending: the unsaved-changes modal is
-    // shown over the workspace (spec/12 §12.12).
+    // A dirty document with a Revert pending: the unsaved-changes modal is shown over
+    // the workspace (spec/12 §12.12). The modal's text is the same for any guarded
+    // action, so this baseline is unaffected by which intent armed it.
     let mut state = state();
     state.begin_stroke((0, 0));
     state.commit_stroke();
-    assert!(!state.begin_guarded(GuardedIntent::Open)); // dirty → arms the modal
+    assert!(!state.begin_guarded(GuardedIntent::Revert)); // dirty → arms the modal
     let mut app = FontSpaceApp::with_state(state);
     let mut harness = Harness::builder()
         .with_size(egui::vec2(1200.0, 800.0))

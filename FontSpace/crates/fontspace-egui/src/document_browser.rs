@@ -10,6 +10,7 @@
 use fontspace_model::{FontSpace, GlyphSetId, PageId};
 
 use crate::state::AppState;
+use crate::workspace::DocumentId;
 
 /// One glyph set in the browser: its id, name, and pages in document order.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -67,56 +68,98 @@ pub fn browser_model(document: &FontSpace) -> BrowserModel {
     }
 }
 
-/// Renders the document browser and applies a page click to the selection.
-pub fn show_document_browser(ui: &mut egui::Ui, state: &mut AppState) {
-    let model = browser_model(state.document());
-    let selection = state.selection();
-    let document_name = state.document_name();
-    let mut clicked_page: Option<(GlyphSetId, PageId)> = None;
+/// One open document prepared for rendering: its id, display name, active flag, and
+/// object tree. Built outside the paint closure so no document borrow is held while
+/// the trailing `&mut state` switch/select runs.
+struct DocumentEntry {
+    id: DocumentId,
+    name: String,
+    active: bool,
+    model: BrowserModel,
+}
 
+/// Renders the document browser — every open file as a collapsing tree — and applies a
+/// page click: switch to that file (if it isn't active) and select the page.
+pub fn show_document_browser(ui: &mut egui::Ui, state: &mut AppState) {
+    let selection = state.selection();
+    let documents: Vec<DocumentEntry> = state
+        .open_documents()
+        .map(|(document, active)| DocumentEntry {
+            id: document.id,
+            name: document.display_name(),
+            active,
+            model: browser_model(&document.content),
+        })
+        .collect();
+
+    let mut clicked: Option<(DocumentId, GlyphSetId, PageId)> = None;
     // `ui.id()` is seeded with this tile's id, so salting from it keeps every widget id
     // unique even when the browser is open in two tiles at once (spec/12 §12.1).
     egui::ScrollArea::vertical()
         .id_salt(ui.id().with("document_browser"))
         .show(ui, |ui| {
-            ui.strong(&document_name);
-            ui.separator();
-
-            section(ui, "Character Sets", "character_sets", |ui| {
-                names(ui, &model.character_sets);
-            });
-
-            section(ui, "Glyph Sets", "glyph_sets", |ui| {
-                if model.glyph_sets.is_empty() {
-                    ui.weak("(none)");
-                }
-                for glyph_set in &model.glyph_sets {
-                    egui::CollapsingHeader::new(&glyph_set.name)
-                        .id_salt(ui.id().with(glyph_set.id.as_uuid()))
-                        .default_open(true)
-                        .show(ui, |ui| {
-                            if glyph_set.pages.is_empty() {
-                                ui.weak("(no pages)");
-                            }
-                            for page in &glyph_set.pages {
-                                let selected = selection.glyph_set_id == glyph_set.id
-                                    && selection.page_id == page.id;
-                                if ui.selectable_label(selected, &page.name).clicked() {
-                                    clicked_page = Some((glyph_set.id, page.id));
-                                }
-                            }
-                        });
-                }
-            });
-
-            section(ui, "Export Configurations", "export_configs", |ui| {
-                names(ui, &model.export_configs);
-            });
+            for document in &documents {
+                let title = if document.active {
+                    format!("{}  (active)", document.name)
+                } else {
+                    document.name.clone()
+                };
+                egui::CollapsingHeader::new(title)
+                    .id_salt(ui.id().with(document.id.0))
+                    .default_open(document.active)
+                    .show(ui, |ui| {
+                        show_document_tree(ui, document, selection, &mut clicked);
+                    });
+            }
         });
 
-    if let Some((glyph_set_id, page_id)) = clicked_page {
+    if let Some((document_id, glyph_set_id, page_id)) = clicked {
+        state.switch_to(document_id);
         state.select_page(glyph_set_id, page_id);
     }
+}
+
+/// Renders one document's object tree (spec/12 §12.2); page clicks are recorded into
+/// `clicked` with the document's id. Only the active document highlights the current
+/// selection.
+fn show_document_tree(
+    ui: &mut egui::Ui,
+    document: &DocumentEntry,
+    selection: crate::state::Selection,
+    clicked: &mut Option<(DocumentId, GlyphSetId, PageId)>,
+) {
+    let model = &document.model;
+    section(ui, "Character Sets", "character_sets", |ui| {
+        names(ui, &model.character_sets);
+    });
+
+    section(ui, "Glyph Sets", "glyph_sets", |ui| {
+        if model.glyph_sets.is_empty() {
+            ui.weak("(none)");
+        }
+        for glyph_set in &model.glyph_sets {
+            egui::CollapsingHeader::new(&glyph_set.name)
+                .id_salt(ui.id().with(glyph_set.id.as_uuid()))
+                .default_open(true)
+                .show(ui, |ui| {
+                    if glyph_set.pages.is_empty() {
+                        ui.weak("(no pages)");
+                    }
+                    for page in &glyph_set.pages {
+                        let selected = document.active
+                            && selection.glyph_set_id == glyph_set.id
+                            && selection.page_id == page.id;
+                        if ui.selectable_label(selected, &page.name).clicked() {
+                            *clicked = Some((document.id, glyph_set.id, page.id));
+                        }
+                    }
+                });
+        }
+    });
+
+    section(ui, "Export Configurations", "export_configs", |ui| {
+        names(ui, &model.export_configs);
+    });
 }
 
 /// A default-open collapsing section, salted so two browser tiles don't collide.

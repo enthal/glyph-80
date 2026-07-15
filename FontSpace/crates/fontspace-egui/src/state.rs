@@ -1,11 +1,11 @@
 //! Application workspace state: the open FontSpace document(s) the GUI edits, the
 //! active document's selection, and editor view options.
 //!
-//! The workspace holds its documents as [`OpenDocument`]s ([`crate::workspace`]); this
-//! slice keeps exactly one, the **active** document, and exposes it through an
-//! active-document facade ([`AppState::document`], [`AppState::selection`], …). Opening
-//! several at once and switching between them arrive in a later slice (spec/11). The
-//! GUI owns this state but **not** font semantics — mutations go through
+//! The workspace holds its documents as [`OpenDocument`]s ([`crate::workspace`]): one
+//! **active** document plus a background of the others. The views read the active one
+//! through an active-document facade ([`AppState::document`], [`AppState::selection`],
+//! …); opening a file adds a document and switching swaps which is active (spec/11).
+//! The GUI owns this state but **not** font semantics — mutations go through
 //! `fontspace-ops` (spec/02).
 
 use std::path::{Path, PathBuf};
@@ -35,29 +35,29 @@ pub struct Selection {
     pub code: u32,
 }
 
-/// A file action that would replace the current document, held pending confirmation
-/// while there are unsaved changes (spec/12 §12.12). The guard prevents a click from
-/// silently discarding edits; the user confirms or cancels.
+/// A file action that would discard the active document's unsaved edits, held pending
+/// confirmation (spec/12 §12.12). The guard prevents a click from silently discarding
+/// edits; the user confirms or cancels. (Open no longer discards — it opens a new
+/// document — so it is unguarded; Close joins this in a later slice.)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GuardedIntent {
-    /// Choose a file and open it in place of the current document.
-    Open,
-    /// Reload the current document from its file on disk, discarding edits.
+    /// Reload the active document from its file on disk, discarding its edits.
     Revert,
 }
 
-/// The editable state of the workspace: the active open document plus view options.
+/// The editable state of the workspace: the open documents plus view options.
 ///
-/// The active document's content, path, dirty flag, and selection live on its
-/// [`OpenDocument`] (`active`) and are reached through the facade accessors below, so
-/// generalizing to several open documents later touches only this struct — not the
-/// views. Path binding, the dirty flag (spec/11 §11.2), and the unsaved-changes guard
-/// are conservative: dirty may read true after undoing back to the saved state, which
-/// only ever asks for an unneeded confirm, never risks silent data loss.
+/// Each document's content, path, dirty flag, and selection live on its
+/// [`OpenDocument`]; the views reach the active one through the facade accessors below,
+/// so they never index the document list. The dirty flag (spec/11 §11.2) is
+/// conservative: it may read true after undoing back to the saved state, which only
+/// ever asks for an unneeded confirm, never risks silent data loss.
 pub struct AppState {
-    /// The active open document — the one the views render and edit. A workspace of
-    /// several documents with switching arrives in a later slice (spec/11 §11.1).
+    /// The active open document — the one the views render and edit (spec/11 §11.1).
     active: OpenDocument,
+    /// The other open documents, most-recently-active first. Opening a file makes it
+    /// active and pushes the previous active here; switching swaps one back to active.
+    background: Vec<OpenDocument>,
     /// Injected id source for object-creating operations (spec/03 §Id injection).
     pub ids: Box<dyn IdGen>,
     pub grid: GridLevel,
@@ -76,10 +76,12 @@ pub struct AppState {
     status: Option<String>,
     /// The stroke currently being dragged in the editor, if any (spec/12 §12.4).
     active_stroke: Option<Stroke>,
-    /// Workspace-level undo/redo stacks of committed change sets (spec/07 §7.7). A
-    /// single-document workspace for now; multi-document lands in Milestone 3.
-    undo_stack: Vec<ChangeSet>,
-    redo_stack: Vec<ChangeSet>,
+    /// Workspace-level undo/redo stacks (spec/07 §7.7, spec/11 §11.6): a single stack
+    /// across all open documents. Each entry is tagged with the [`DocumentId`] it
+    /// applies to, so undo/redo targets the originating document even after the user
+    /// switches which one is active.
+    undo_stack: Vec<(DocumentId, ChangeSet)>,
+    redo_stack: Vec<(DocumentId, ChangeSet)>,
     /// A character-set entry the user has asked to remove, awaiting confirmation of
     /// its cascade impact (spec/12 §12.7). Stored as a resolved `(set, code)` target
     /// so a later selection change can't retarget the confirm.
@@ -102,6 +104,7 @@ impl AppState {
         let active = OpenDocument::new(DocumentId::new(ids.as_mut()), content, selection);
         Self {
             active,
+            background: Vec::new(),
             ids,
             grid: GridLevel::Subtle,
             preview_text: "AAA HAH".to_string(),
@@ -222,12 +225,14 @@ impl AppState {
         }
     }
 
-    /// Records a committed change on the undo stack (clearing redo) and marks the
-    /// document dirty, skipping an empty (no-op) change set. The single place edits
-    /// enter the history — so it is also the single place the dirty flag is raised.
+    /// Records a committed change to the **active** document on the undo stack
+    /// (clearing redo) and marks it dirty, skipping an empty (no-op) change set. The
+    /// single place edits enter the history — so it is also the single place the dirty
+    /// flag is raised. The entry is tagged with the active document's id so undo/redo
+    /// stays correct after switching documents (spec/11 §11.6).
     fn record(&mut self, change_set: ChangeSet) {
         if !change_set.is_empty() {
-            self.undo_stack.push(change_set);
+            self.undo_stack.push((self.active.id, change_set));
             self.redo_stack.clear();
             self.active.dirty = true;
         }
@@ -299,22 +304,39 @@ impl AppState {
         !self.redo_stack.is_empty()
     }
 
-    /// Undoes the most recent committed change (spec/07 §7.7).
+    /// Undoes the most recent committed change, on the document it came from — even if
+    /// that isn't the active one (spec/07 §7.7, spec/11 §11.6).
     pub fn undo(&mut self) {
-        if let Some(change_set) = self.undo_stack.pop() {
-            // The change set came from this document, so its inverse applies cleanly.
-            let _ = undo(&mut self.active.content, &change_set);
-            self.redo_stack.push(change_set);
-            self.active.dirty = true;
+        if let Some((doc_id, change_set)) = self.undo_stack.pop() {
+            if let Some(document) = self.document_mut_by_id(doc_id) {
+                // The change set came from this document, so its inverse applies cleanly.
+                let _ = undo(&mut document.content, &change_set);
+                document.dirty = true;
+            }
+            self.redo_stack.push((doc_id, change_set));
         }
     }
 
-    /// Redoes the most recently undone change (spec/07 §7.7).
+    /// Redoes the most recently undone change, on its originating document (spec/07
+    /// §7.7, spec/11 §11.6).
     pub fn redo(&mut self) {
-        if let Some(change_set) = self.redo_stack.pop() {
-            let _ = apply_change_set(&mut self.active.content, &change_set);
-            self.undo_stack.push(change_set);
-            self.active.dirty = true;
+        if let Some((doc_id, change_set)) = self.redo_stack.pop() {
+            if let Some(document) = self.document_mut_by_id(doc_id) {
+                let _ = apply_change_set(&mut document.content, &change_set);
+                document.dirty = true;
+            }
+            self.undo_stack.push((doc_id, change_set));
+        }
+    }
+
+    /// The open document with `id` (active or background), if present.
+    fn document_mut_by_id(&mut self, id: DocumentId) -> Option<&mut OpenDocument> {
+        if self.active.id == id {
+            Some(&mut self.active)
+        } else {
+            self.background
+                .iter_mut()
+                .find(|document| document.id == id)
         }
     }
 
@@ -484,13 +506,15 @@ impl AppState {
         self.active.dirty = false;
     }
 
-    /// Replaces the document with a freshly loaded one bound to `path` (Open/Revert):
-    /// resets selection, clears history and any in-progress interaction, and marks the
-    /// document clean. Load warnings (e.g. dangling glyphs) go to the status strip.
+    /// Reloads the **active** document in place from `path` (Revert): replaces its
+    /// content, resets its selection, drops *its* undo/redo history (other documents'
+    /// entries stay), clears any in-progress interaction, and marks it clean. Load
+    /// warnings (e.g. dangling glyphs) go to the status strip.
     pub fn load_document(&mut self, outcome: LoadOutcome, path: PathBuf) {
+        let active_id = self.active.id;
+        self.undo_stack.retain(|(id, _)| *id != active_id);
+        self.redo_stack.retain(|(id, _)| *id != active_id);
         self.active.content = outcome.document;
-        self.undo_stack.clear();
-        self.redo_stack.clear();
         self.active_stroke = None;
         self.pending_remove = None;
         if let Some(selection) = default_selection(&self.active.content) {
@@ -499,6 +523,63 @@ impl AppState {
         self.status = Some(load_status(&path, &outcome.warnings));
         self.active.path = Some(path);
         self.active.dirty = false;
+    }
+
+    /// Opens a freshly loaded document as a **new** active document, pushing the
+    /// previous active into the background (spec/11 §11.1). Unlike Revert, this
+    /// discards nothing — the workspace now holds both. In-progress editor interaction
+    /// is dropped (it belonged to the previously-active document).
+    pub fn open_document(&mut self, outcome: LoadOutcome, path: PathBuf) {
+        let selection = default_selection(&outcome.document).unwrap_or(self.active.selection);
+        let id = DocumentId::new(self.ids.as_mut());
+        let mut document = OpenDocument::new(id, outcome.document, selection);
+        document.path = Some(path.clone());
+        self.status = Some(load_status(&path, &outcome.warnings));
+        let previous = std::mem::replace(&mut self.active, document);
+        self.background.insert(0, previous);
+        self.discard_active_interaction();
+    }
+
+    /// Makes the open document `id` active, swapping the current active into the
+    /// background (most-recently-active first). A no-op if `id` is already active or
+    /// isn't open. Drops in-progress editor interaction, which belonged to the
+    /// previously-active document.
+    pub fn switch_to(&mut self, id: DocumentId) {
+        if self.active.id == id {
+            return;
+        }
+        let Some(index) = self
+            .background
+            .iter()
+            .position(|document| document.id == id)
+        else {
+            return;
+        };
+        let target = self.background.remove(index);
+        let previous = std::mem::replace(&mut self.active, target);
+        self.background.insert(0, previous);
+        self.discard_active_interaction();
+    }
+
+    /// Clears interaction state tied to the previously-active document when the active
+    /// document changes: the in-progress stroke, the pending remove, and any pending
+    /// unsaved-changes guard (which was about the document that just stepped aside).
+    fn discard_active_interaction(&mut self) {
+        self.active_stroke = None;
+        self.pending_remove = None;
+        self.pending_discard = None;
+    }
+
+    /// The open documents as `(document, is_active)`, active first, then the background
+    /// in most-recently-active order — for the document browser (spec/12 §12.2).
+    pub fn open_documents(&self) -> impl Iterator<Item = (&OpenDocument, bool)> {
+        std::iter::once((&self.active, true))
+            .chain(self.background.iter().map(|document| (document, false)))
+    }
+
+    /// How many documents are open (always at least one).
+    pub fn open_document_count(&self) -> usize {
+        1 + self.background.len()
     }
 
     /// Whether a Revert is possible: the document is file-bound and has unsaved edits.
@@ -872,14 +953,14 @@ mod tests {
     fn guarded_action_proceeds_when_clean_and_arms_a_modal_when_dirty() {
         let mut state = editable_state();
         // Clean: proceeds immediately, nothing pending.
-        assert!(state.begin_guarded(GuardedIntent::Open));
+        assert!(state.begin_guarded(GuardedIntent::Revert));
         assert_eq!(state.pending_discard(), None);
 
         state.begin_stroke((0, 0));
         state.commit_stroke();
         // Dirty: does not proceed; arms the confirmation.
-        assert!(!state.begin_guarded(GuardedIntent::Open));
-        assert_eq!(state.pending_discard(), Some(GuardedIntent::Open));
+        assert!(!state.begin_guarded(GuardedIntent::Revert));
+        assert_eq!(state.pending_discard(), Some(GuardedIntent::Revert));
 
         // Cancel keeps the document; take (Discard) hands the intent back once.
         state.cancel_discard();
@@ -931,5 +1012,105 @@ mod tests {
         assert!(state.selected_context().is_some());
         assert_eq!(state.selection().code, 0x41);
         assert_eq!(state.status(), Some("Opened opened.fontspace.json"));
+    }
+
+    /// A fresh starter document wrapped as a `LoadOutcome`, for the multi-document
+    /// tests (its own object ids don't matter — `open_document` mints a new id).
+    fn loaded_starter() -> LoadOutcome {
+        let fresh = AppState::with_ids(Box::new(SequentialIdGen::new()));
+        LoadOutcome {
+            document: fresh.document().clone(),
+            warnings: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn opening_a_document_adds_it_and_keeps_the_previous_in_the_background() {
+        let mut state = editable_state();
+        // Edit the first document so it has undo history.
+        state.begin_stroke((0, 0));
+        state.commit_stroke();
+        assert_eq!(state.open_document_count(), 1);
+        assert!(state.can_undo());
+
+        state.open_document(loaded_starter(), PathBuf::from("/tmp/b.fontspace.json"));
+
+        // Two documents now open; the new one is active and file-bound, the previous
+        // moved to the background. The undo history is kept (workspace-level).
+        assert_eq!(state.open_document_count(), 2);
+        assert_eq!(state.document_name(), "b.fontspace.json");
+        assert!(state.can_undo());
+        let (active, is_active) = state.open_documents().next().unwrap();
+        assert!(is_active);
+        assert_eq!(active.display_name(), "b.fontspace.json");
+    }
+
+    #[test]
+    fn switching_documents_makes_the_target_active() {
+        let mut state = editable_state();
+        let first_id = state.open_documents().next().unwrap().0.id;
+        state.open_document(loaded_starter(), PathBuf::from("/tmp/b.fontspace.json"));
+        // Now b is active, the first document is in the background.
+        assert_ne!(state.open_documents().next().unwrap().0.id, first_id);
+
+        state.switch_to(first_id);
+        assert_eq!(state.open_documents().next().unwrap().0.id, first_id);
+        // Switching to the already-active document is a no-op.
+        state.switch_to(first_id);
+        assert_eq!(state.open_document_count(), 2);
+    }
+
+    #[test]
+    fn undo_targets_the_originating_document_after_switching() {
+        // The load-bearing multi-document invariant: an edit's undo applies to the
+        // document it came from, even once another document is active (spec/11 §11.6).
+        let mut state = editable_state();
+        let first_id = state.open_documents().next().unwrap().0.id;
+        // Erase 'A''s on-pixel (2,0) in the first document.
+        assert!(state.selected_pixel(2, 0));
+        state.begin_stroke((2, 0));
+        state.commit_stroke();
+        assert!(!state.selected_pixel(2, 0));
+
+        // Open a second document (fresh 'A' drawn); it becomes active.
+        state.open_document(loaded_starter(), PathBuf::from("/tmp/b.fontspace.json"));
+        assert!(state.selected_pixel(2, 0)); // b's 'A' is intact
+
+        // Undo — must revert the *first* document, not the active second one.
+        state.undo();
+        assert!(state.selected_pixel(2, 0)); // b untouched
+
+        // Back on the first document, its erase has been undone (pixel restored).
+        state.switch_to(first_id);
+        assert!(state.selected_pixel(2, 0));
+        assert!(state.can_redo());
+
+        // Redo re-applies on the originating document: the erase returns.
+        state.redo();
+        assert!(!state.selected_pixel(2, 0));
+    }
+
+    #[test]
+    fn reverting_a_document_keeps_other_documents_undo_history() {
+        // The §11.6 invariant: Revert drops only the reverted document's undo entries,
+        // leaving other open documents' history intact.
+        let mut state = editable_state();
+        let first_id = state.open_documents().next().unwrap().0.id;
+        state.mark_saved(PathBuf::from("/tmp/a.fontspace.json"));
+        state.begin_stroke((0, 0)); // an edit on the first document
+        state.commit_stroke();
+
+        // Open a second document and give it an edit too.
+        state.open_document(loaded_starter(), PathBuf::from("/tmp/b.fontspace.json"));
+        state.begin_stroke((0, 0));
+        state.commit_stroke();
+        assert_eq!(state.undo_stack.len(), 2); // one entry per document
+
+        // Revert the first document (reload in place).
+        state.switch_to(first_id);
+        state.load_document(loaded_starter(), PathBuf::from("/tmp/a.fontspace.json"));
+
+        // Only the first document's entry was dropped; the second's survives.
+        assert_eq!(state.undo_stack.len(), 1);
     }
 }
