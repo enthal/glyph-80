@@ -1,7 +1,11 @@
 //! Platform identity and OS integration (spec/18). `fontspace-egui` is the only crate
-//! allowed to touch OS-facing concerns; this module holds the pieces that are shared
-//! across platforms (the identity strings, the embedded icon) plus, in later slices,
-//! the `cfg`-gated Linux desktop-entry install and macOS menu presenter.
+//! allowed to touch OS-facing concerns; this module holds the pieces shared across
+//! platforms (the identity strings, the embedded icon, the viewport builder) and the
+//! `cfg`-gated Linux integration in its [`desktop`] and [`cursor`] submodules. Their
+//! pure string/path builders are unit-tested on every platform (§18.6).
+
+pub mod cursor;
+pub mod desktop;
 
 /// The one reverse-DNS **desktop identity** (spec/18 §18.1): the Wayland/X11
 /// `app_id`, the basename of the Linux `.desktop` and icon files, the `.desktop`
@@ -19,7 +23,7 @@ pub const STORAGE_NAMESPACE: &str = "fontspace";
 /// The window/dock/taskbar icon, embedded so there is no runtime file dependency
 /// (spec/18 §18.2). Also the source bytes written verbatim to the XDG icon path on
 /// Linux (§18.5) and the origin of the packager `.icns`/icons.
-pub const APP_ICON_PNG: &[u8] = include_bytes!("../assets/app_icon.png");
+pub const APP_ICON_PNG: &[u8] = include_bytes!("../../assets/app_icon.png");
 
 /// Decodes [`APP_ICON_PNG`] into an [`egui::IconData`] for the viewport. A decode
 /// failure is a cosmetic loss — the caller degrades to no icon, never panics
