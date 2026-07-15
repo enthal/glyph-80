@@ -20,11 +20,23 @@ use geometry::{GridLevel, MatrixGeometry};
 
 const GRID_SUBTLE: Color32 = Color32::from_gray(64);
 const GRID_STRONG: Color32 = Color32::from_gray(110);
-const GUIDE: Color32 = Color32::from_rgb(80, 160, 240);
 const HOVER: Color32 = Color32::from_rgb(255, 200, 60);
 /// Tentative paint (a stroke in progress, before commit).
 const TENTATIVE_ON: Color32 = Color32::from_rgb(180, 210, 120);
 const TENTATIVE_OFF: Color32 = Color32::from_rgb(70, 60, 40);
+
+/// A stable, distinct color for a guide, derived from its id (spec/12 §12.6). Keying
+/// on the id means a guide keeps its color across renders and reorders. Hues are
+/// scattered around the wheel by the golden-ratio conjugate so even sequential ids
+/// (and neighbouring guides) land far apart; saturation/value are fixed for legible,
+/// bright lines over the dark matrix.
+pub fn guide_color(id: GuideId) -> Color32 {
+    // Reduce the id to a bounded integer, then step the hue by the golden ratio so
+    // successive values fall at 0.618, 0.236, 0.854, … around the wheel.
+    let n = (id.as_uuid().as_u128() % 4096) as f64;
+    let hue = (n * 0.618_033_988_749_895).fract() as f32;
+    egui::ecolor::Hsva::new(hue, 0.65, 1.0, 1.0).into()
+}
 
 /// Renders the glyph editor for the current selection into `ui`, handling pointer
 /// editing. Mutates `state` (applies a committed stroke, tracks the in-progress one).
@@ -91,15 +103,15 @@ pub fn show_glyph_editor(ui: &mut egui::Ui, state: &mut AppState) {
         }
     }
 
-    // Page guides, drawn on the grid lines over the matrix (spec/12 §12.6).
-    let guide_stroke = EguiStroke::new(2.0, GUIDE);
+    // Page guides, drawn on the grid lines over the matrix, each in its own stable
+    // color so they are told apart at a glance (spec/12 §12.6).
     if let Some((_, page)) = state.selected_context() {
         for guide in &page.guides {
             if !guide.visible {
                 continue;
             }
             let (a, b) = geom.guide_line(guide.axis, guide.position);
-            painter.line_segment([a, b], guide_stroke);
+            painter.line_segment([a, b], EguiStroke::new(2.0, guide_color(guide.id)));
         }
     }
 
@@ -168,6 +180,11 @@ fn guides_section(ui: &mut egui::Ui, state: &mut AppState) {
             }
             for guide in &page.guides {
                 ui.horizontal(|ui| {
+                    // A swatch matching the guide's line color on the matrix.
+                    let (swatch, _) =
+                        ui.allocate_exact_size(egui::vec2(12.0, 12.0), Sense::hover());
+                    ui.painter()
+                        .rect_filled(swatch, CornerRadius::same(2), guide_color(guide.id));
                     let mut visible = guide.visible;
                     if ui.checkbox(&mut visible, "").changed() {
                         toggle = Some((guide.id, visible));
@@ -238,5 +255,26 @@ fn handle_input(state: &mut AppState, geom: &MatrixGeometry, response: &egui::Re
     } else if state.active_stroke().is_some() {
         // Button released (or the gesture ended): commit whatever was painted.
         state.commit_stroke();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fontspace_model::SequentialIdGen;
+
+    #[test]
+    fn guide_color_is_deterministic_and_distinct_per_id() {
+        let mut ids = SequentialIdGen::new();
+        let a = GuideId::new(&mut ids);
+        let b = GuideId::new(&mut ids);
+        let c = GuideId::new(&mut ids);
+        // Same id → same color every time.
+        assert_eq!(guide_color(a), guide_color(a));
+        // Consecutive (sequential) ids land on visibly different hues — the
+        // golden-ratio scatter keeps even adjacent guides apart.
+        assert_ne!(guide_color(a), guide_color(b));
+        assert_ne!(guide_color(b), guide_color(c));
+        assert_ne!(guide_color(a), guide_color(c));
     }
 }
