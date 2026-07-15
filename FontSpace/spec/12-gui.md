@@ -63,6 +63,8 @@ pointer-down on an ON pixel  -> the whole stroke erases
 
 The operation is fixed for the entire drag. Implementation: capture the pointer until release; interpolate between sampled cells so fast motion leaves no gaps; visit each cell at most once per stroke; accumulate the changed cells; commit **one** `SetPixels` command on release (chapter 7); show the tentative stroke live before commit if practical. One drag = one undo entry.
 
+**Rectangular pixel-region selection.** Holding **Shift** while dragging defines a rectangular marquee over glyph cells instead of painting (the gesture's kind is fixed at press). The marquee is drawn as an outline over the matrix and persists until re-selected, cleared, or the selection navigates to another glyph (it is tied to that glyph's grid). While a selection exists, region operations apply to it as **one** `SetPixels` each — one undo entry: **flip** (reverse) mirrors the region left↔right or top↔bottom in place; copy/paste (a region clipboard stamped at the marquee) and rotate follow. Region controls appear only while a selection exists, so the editor is unchanged until you Shift+drag.
+
 ## 12.5 Keyboard defaults (configurable later)
 
 ```text

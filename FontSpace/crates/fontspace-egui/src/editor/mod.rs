@@ -7,20 +7,24 @@
 //! outside this paint/input code.
 
 pub mod geometry;
+pub mod region;
 pub mod stroke;
 
 use egui::{
-    Align2, Color32, CornerRadius, FontId, Rangef, Sense, Stroke as EguiStroke, StrokeKind,
+    Align2, Color32, CornerRadius, FontId, Rangef, Rect, Sense, Stroke as EguiStroke, StrokeKind,
 };
 use fontspace_model::{GuideAxis, GuideId};
 
 use crate::glyph_paint::paint_bitmap;
 use crate::state::AppState;
 use geometry::{GridLevel, MatrixGeometry};
+use region::FlipDir;
 
 const GRID_SUBTLE: Color32 = Color32::from_gray(64);
 const GRID_STRONG: Color32 = Color32::from_gray(110);
 const HOVER: Color32 = Color32::from_rgb(255, 200, 60);
+/// The rectangular pixel-selection marquee (spec/12 §12.4).
+const SELECTION: Color32 = Color32::from_rgb(240, 240, 255);
 /// Tentative paint (a stroke in progress, before commit).
 const TENTATIVE_ON: Color32 = Color32::from_rgb(180, 210, 120);
 const TENTATIVE_OFF: Color32 = Color32::from_rgb(70, 60, 40);
@@ -61,6 +65,7 @@ pub fn show_glyph_editor(ui: &mut egui::Ui, state: &mut AppState) {
     ui.separator();
 
     guides_section(ui, state);
+    region_toolbar(ui, state);
 
     // Body: the painted matrix fills the remaining space and takes pointer input.
     let (rect, response) = ui.allocate_exact_size(ui.available_size(), Sense::click_and_drag());
@@ -113,6 +118,20 @@ pub fn show_glyph_editor(ui: &mut egui::Ui, state: &mut AppState) {
             let (a, b) = geom.guide_line(guide.axis, guide.position);
             painter.line_segment([a, b], EguiStroke::new(2.0, guide_color(guide.id)));
         }
+    }
+
+    // Pixel-region marquee, drawn as an outline enclosing the selected cells.
+    if let Some(rect) = state.pixel_selection() {
+        let sel = Rect::from_min_max(
+            geom.cell_rect(rect.x0, rect.y0).min,
+            geom.cell_rect(rect.x1, rect.y1).max,
+        );
+        painter.rect_stroke(
+            sel,
+            CornerRadius::ZERO,
+            EguiStroke::new(2.0, SELECTION),
+            StrokeKind::Inside,
+        );
     }
 
     // Hover: outline the cell and show its coordinate with a legible backdrop.
@@ -234,27 +253,61 @@ fn guides_section(ui: &mut egui::Ui, state: &mut AppState) {
     }
 }
 
-/// Translates pointer gestures into stroke edits (spec/12 §12.4). A press begins a
-/// stroke whose mode is fixed by the first pixel; dragging extends it (interpolated
-/// so no cell is skipped); release commits it as one `SetPixels` — one undo entry.
+/// Controls for the pixel-region marquee — shown only while a selection exists, so
+/// the editor is unchanged until you Shift+drag (spec/12 §12.4). Flip mirrors the
+/// region in place (the "reverse"); Clear drops the marquee.
+fn region_toolbar(ui: &mut egui::Ui, state: &mut AppState) {
+    let Some(rect) = state.pixel_selection() else {
+        return;
+    };
+    ui.horizontal(|ui| {
+        ui.label(format!("Selection {}×{}", rect.width(), rect.height()));
+        if ui.button("Flip H").clicked() {
+            state.flip_selection(FlipDir::LeftRight);
+        }
+        if ui.button("Flip V").clicked() {
+            state.flip_selection(FlipDir::TopBottom);
+        }
+        if ui.button("Clear").clicked() {
+            state.clear_selection();
+        }
+    });
+    ui.separator();
+}
+
+/// Translates pointer gestures into stroke edits or a region marquee (spec/12 §12.4).
+/// **Shift+drag selects** a rectangle of cells; a plain drag paints, its mode fixed by
+/// the first pixel and interpolated so no cell is skipped. The gesture's kind is fixed
+/// at press (whichever is already in progress continues); release commits the stroke
+/// or ends the selection drag (the marquee persists).
 fn handle_input(state: &mut AppState, geom: &MatrixGeometry, response: &egui::Response) {
     // `is_pointer_button_down_on` stays true while the button that pressed on this
     // widget is held, even if the pointer wanders off — so a click and a drag are the
     // same gesture, and dragging outside the matrix simply adds no cells.
     if response.is_pointer_button_down_on() {
+        let shift = response.ctx.input(|i| i.modifiers.shift);
         if let Some(cell) = response
             .interact_pointer_pos()
             .and_then(|pos| geom.cell_at(pos))
         {
-            if state.active_stroke().is_none() {
-                state.begin_stroke(cell);
-            } else {
+            if state.is_selecting() {
+                state.extend_selection(cell); // continue an in-progress marquee
+            } else if state.active_stroke().is_some() {
                 state.extend_stroke(cell);
+            } else if shift {
+                state.begin_selection(cell); // Shift held at press → marquee
+            } else {
+                state.begin_stroke(cell);
             }
         }
-    } else if state.active_stroke().is_some() {
-        // Button released (or the gesture ended): commit whatever was painted.
-        state.commit_stroke();
+    } else {
+        // Button released (or the gesture ended): finish whichever gesture was active.
+        if state.active_stroke().is_some() {
+            state.commit_stroke();
+        }
+        if state.is_selecting() {
+            state.end_selection();
+        }
     }
 }
 

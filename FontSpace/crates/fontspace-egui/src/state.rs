@@ -25,6 +25,7 @@ use fontspace_ops::{
 };
 
 use crate::editor::geometry::GridLevel;
+use crate::editor::region::{FlipDir, PixelRect, flip_edits};
 use crate::editor::stroke::Stroke;
 use crate::workspace::{DocumentId, OpenDocument};
 
@@ -90,6 +91,12 @@ pub struct AppState {
     /// its cascade impact (spec/12 §12.7). Stored as a resolved `(set, code)` target
     /// so a later selection change can't retarget the confirm.
     pending_remove: Option<(CharacterSetId, u32)>,
+    /// The rectangular pixel-region marquee in the editor (spec/12 §12.4), or `None`.
+    /// UI state, tied to the current glyph's grid; cleared when the selection navigates
+    /// to another glyph. Set by Shift+drag.
+    pixel_selection: Option<PixelRect>,
+    /// The fixed corner cell of an in-progress selection drag, or `None` between drags.
+    selection_anchor: Option<(u16, u16)>,
 }
 
 impl Default for AppState {
@@ -119,6 +126,8 @@ impl AppState {
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
             pending_remove: None,
+            pixel_selection: None,
+            selection_anchor: None,
         }
     }
 
@@ -137,6 +146,7 @@ impl AppState {
     /// from clicking a page-overview thumbnail).
     pub fn select_code(&mut self, code: u32) {
         self.active.selection.code = code;
+        self.clear_selection(); // the marquee is tied to the glyph it was drawn on
     }
 
     /// Points the selection at a `(glyph_set, page)` — e.g. from clicking a page in the
@@ -175,6 +185,7 @@ impl AppState {
             page_id,
             code,
         };
+        self.clear_selection(); // the marquee is tied to the glyph it was drawn on
     }
 
     /// The current value of pixel `(x, y)` on the selected glyph (`false` if the
@@ -224,6 +235,70 @@ impl AppState {
         };
         // The selection resolves and cells are in-bounds, so this does not fail; a
         // stroke that paints pixels to their current value yields an empty change set.
+        if let Ok(change_set) = set_pixels(&mut self.active.content, &request) {
+            self.record(change_set);
+        }
+    }
+
+    // --- Rectangular pixel-region selection (spec/12 §12.4). Shift+drag defines a
+    // marquee; region transforms apply as one `SetPixels` — one undo entry. ---
+
+    /// The current pixel-region marquee, for rendering and region ops.
+    pub fn pixel_selection(&self) -> Option<PixelRect> {
+        self.pixel_selection
+    }
+
+    /// Whether a selection drag is in progress (routes further drag to the marquee).
+    pub fn is_selecting(&self) -> bool {
+        self.selection_anchor.is_some()
+    }
+
+    /// Begins a selection drag anchored at `cell` (a 1-cell marquee to start).
+    pub fn begin_selection(&mut self, cell: (u16, u16)) {
+        self.selection_anchor = Some(cell);
+        self.pixel_selection = Some(PixelRect::from_corners(cell, cell));
+    }
+
+    /// Extends the in-progress selection to `cell`.
+    pub fn extend_selection(&mut self, cell: (u16, u16)) {
+        if let Some(anchor) = self.selection_anchor {
+            self.pixel_selection = Some(PixelRect::from_corners(anchor, cell));
+        }
+    }
+
+    /// Ends the selection drag; the marquee persists until cleared or re-selected.
+    pub fn end_selection(&mut self) {
+        self.selection_anchor = None;
+    }
+
+    /// Clears the marquee (the Clear button, or navigating to another glyph/document).
+    pub fn clear_selection(&mut self) {
+        self.pixel_selection = None;
+        self.selection_anchor = None;
+    }
+
+    /// Mirrors the selected region in place (`dir`) as one undo entry — the "reverse"
+    /// (spec/12 §12.4). A no-op when there is no selection or the region is symmetric.
+    pub fn flip_selection(&mut self, dir: FlipDir) {
+        let Some(rect) = self.pixel_selection else {
+            return;
+        };
+        let Some((glyph_set, _)) = self.selected_context() else {
+            return;
+        };
+        let size = glyph_set.glyph_size;
+        let bitmap = self
+            .selected_bitmap()
+            .cloned()
+            .unwrap_or_else(|| Bitmap::new_blank(size));
+        let request = SetPixels {
+            target: GlyphRef {
+                glyph_set_id: self.active.selection.glyph_set_id,
+                page_id: self.active.selection.page_id,
+                code: self.active.selection.code,
+            },
+            edits: flip_edits(&bitmap, rect, dir),
+        };
         if let Ok(change_set) = set_pixels(&mut self.active.content, &request) {
             self.record(change_set);
         }
@@ -592,6 +667,8 @@ impl AppState {
         self.drop_history_of(self.active.id);
         self.active.content = outcome.document;
         self.active_stroke = None;
+        self.pixel_selection = None; // the marquee was tied to the pre-revert glyph
+        self.selection_anchor = None;
         self.pending_remove = None;
         if let Some(selection) = default_selection(&self.active.content) {
             self.active.selection = selection;
@@ -638,10 +715,13 @@ impl AppState {
     }
 
     /// Clears interaction state tied to the previously-active document when the active
-    /// document changes: the in-progress stroke, the pending remove, and any pending
-    /// unsaved-changes guard (which was about the document that just stepped aside).
+    /// document changes: the in-progress stroke, the pixel-region marquee (tied to the
+    /// glyph it was drawn on), the pending remove, and any pending unsaved-changes guard
+    /// (which was about the document that just stepped aside).
     fn discard_active_interaction(&mut self) {
         self.active_stroke = None;
+        self.pixel_selection = None;
+        self.selection_anchor = None;
         self.pending_remove = None;
         self.pending_discard = None;
     }
@@ -924,6 +1004,71 @@ mod tests {
             state.selected_context().unwrap().1.guides[0].name,
             "baseline"
         );
+    }
+
+    #[test]
+    fn flip_selection_mirrors_the_region_and_is_one_undo_entry() {
+        let mut state = editable_state();
+        // The starter's 'A' is left-right symmetric, so paint an asymmetric pixel in
+        // the unused column 0 to make the flip observable.
+        state.begin_stroke((0, 0));
+        state.commit_stroke();
+        assert!(state.selected_pixel(0, 0));
+        assert!(!state.selected_pixel(7, 0));
+
+        // Select the whole glyph and mirror left↔right.
+        state.begin_selection((0, 0));
+        state.extend_selection((7, 7));
+        state.end_selection();
+        state.flip_selection(FlipDir::LeftRight);
+
+        assert!(state.selected_pixel(7, 0)); // (0,0) mirrored to (7,0)
+        assert!(!state.selected_pixel(0, 0));
+        assert!(state.can_undo());
+
+        // Undo the flip alone (the paint remains): (0,0) is back, (7,0) clear.
+        state.undo();
+        assert!(state.selected_pixel(0, 0));
+        assert!(!state.selected_pixel(7, 0));
+    }
+
+    #[test]
+    fn navigating_to_another_glyph_clears_the_marquee() {
+        let mut state = editable_state();
+        state.begin_selection((0, 0));
+        state.extend_selection((3, 3));
+        state.end_selection();
+        assert!(state.pixel_selection().is_some());
+
+        state.select_code(0x42);
+        assert!(state.pixel_selection().is_none());
+    }
+
+    #[test]
+    fn switching_documents_clears_the_marquee() {
+        let mut state = editable_state();
+        state.begin_selection((0, 0));
+        state.extend_selection((3, 3));
+        state.end_selection();
+        assert!(state.pixel_selection().is_some());
+
+        // Opening a second document makes it active — the marquee (tied to the first
+        // document's glyph) must not leak onto it.
+        state.open_document(loaded_starter(), PathBuf::from("/tmp/b.fontspace.json"));
+        assert!(state.pixel_selection().is_none());
+    }
+
+    #[test]
+    fn reverting_clears_the_marquee() {
+        let mut state = editable_state();
+        state.mark_saved(PathBuf::from("/tmp/a.fontspace.json"));
+        state.begin_selection((0, 0));
+        state.extend_selection((3, 3));
+        state.end_selection();
+        assert!(state.pixel_selection().is_some());
+
+        state.load_document(loaded_starter(), PathBuf::from("/tmp/a.fontspace.json"));
+        assert!(state.pixel_selection().is_none());
     }
 
     #[test]
