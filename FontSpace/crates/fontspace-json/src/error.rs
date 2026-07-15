@@ -56,4 +56,20 @@ pub enum JsonError {
     /// Dangling glyphs do **not** appear here — they are tolerated warnings.
     #[error("document failed validation with {} error(s)", .0.len())]
     Invalid(Vec<ValidationError>),
+
+    /// A fragment declares a `fragment_version` this build does not support (spec/08 §8.5).
+    #[error("unsupported fragment_version {found}; this build supports {supported}")]
+    UnsupportedFragmentVersion { found: u32, supported: u32 },
+
+    /// A fragment declares a `kind` this build does not recognize (spec/08 §8.1/§8.5).
+    #[error("unknown fragment kind {kind:?}")]
+    UnknownFragmentKind { kind: String },
+
+    /// A fragment's `source_glyph_size` is not a valid geometry (spec/03 §3.4).
+    #[error("fragment source_glyph_size {width}×{height} is invalid: {reason}")]
+    InvalidFragmentGeometry {
+        width: u16,
+        height: u16,
+        reason: String,
+    },
 }
