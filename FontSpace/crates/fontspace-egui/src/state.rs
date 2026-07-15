@@ -10,16 +10,18 @@
 
 use std::path::{Path, PathBuf};
 
-use fontspace_json::LoadOutcome;
+use fontspace_json::{LoadOutcome, load_fragment, save_fragment};
 use fontspace_model::{
-    Bitmap, CharacterEntry, CharacterSet, CharacterSetId, FontSpace, Glyph, GlyphPage, GlyphSet,
-    GlyphSetId, GlyphSize, Guide, GuideAxis, GuideId, IdGen, PageId, RandomIdGen,
+    Bitmap, CharacterEntry, CharacterSet, CharacterSetId, FontSpace, FontSpaceFragment,
+    FragmentGlyph, Glyph, GlyphFragment, GlyphPage, GlyphSet, GlyphSetId, GlyphSize, Guide,
+    GuideAxis, GuideId, IdGen, PageId, RandomIdGen,
 };
 
 use fontspace_ops::{
-    AddGuide, ChangeSet, FontSpaceWarning, GlyphRef, MoveGuide, RemoveCharacterEntry, RemoveGuide,
-    SetGuideVisible, SetPixels, add_guide, apply_change_set, move_guide, remove_character_entry,
-    remove_guide, set_guide_visible, set_pixels, undo,
+    AddGuide, ChangeSet, FontSpaceWarning, GlyphMapping, GlyphRef, GlyphSizeConversion, MoveGuide,
+    PasteGlyphs, RemoveCharacterEntry, RemoveGuide, SetGuideVisible, SetPixels, add_guide,
+    apply_change_set, move_guide, paste_glyphs, remove_character_entry, remove_guide,
+    set_guide_visible, set_pixels, undo,
 };
 
 use crate::editor::geometry::GridLevel;
@@ -393,6 +395,54 @@ impl AppState {
             .character_set(glyph_set.character_set_id)
     }
 
+    /// Serializes the selected glyph as a single-glyph fragment for the clipboard
+    /// (spec/08 §8.2). Returns the canonical fragment JSON, or `None` if the selection
+    /// no longer resolves. An undrawn cell copies as a blank glyph of the set's
+    /// geometry — pasting it elsewhere clears that target.
+    pub fn copy_selected_glyph(&self) -> Option<String> {
+        let (glyph_set, page) = self.selected_context()?;
+        let code = self.active.selection.code;
+        let bitmap = page
+            .glyph_of_code(code)
+            .map(|glyph| glyph.bitmap.clone())
+            .unwrap_or_else(|| Bitmap::new_blank(glyph_set.glyph_size));
+        let label = self.selected_label().unwrap_or_default().to_string();
+        let fragment = FontSpaceFragment::Glyphs(GlyphFragment {
+            source_glyph_size: glyph_set.glyph_size,
+            glyphs: vec![FragmentGlyph {
+                code,
+                label,
+                bitmap,
+            }],
+        });
+        Some(save_fragment(&fragment))
+    }
+
+    /// Pastes a clipboard glyph fragment onto the **current** selection as one undo
+    /// entry (spec/08 §8.2). The fragment's glyphs map onto the selected code and the
+    /// codes numerically after it (`SequentialFromCode`), so a single copied glyph
+    /// lands exactly where the editor is pointed. Geometry must match (`RequireExact`).
+    /// Returns a human-readable error for the status strip on a non-fragment clipboard,
+    /// a geometry mismatch, or a destination code with no entry.
+    pub fn paste_glyph_from_clipboard(&mut self, clipboard: &str) -> Result<(), String> {
+        let FontSpaceFragment::Glyphs(fragment) = load_fragment(clipboard)
+            .map_err(|err| format!("Clipboard is not a glyph fragment: {err}"))?;
+        let request = PasteGlyphs {
+            fragment,
+            target_glyph_set_id: self.active.selection.glyph_set_id,
+            target_page_id: self.active.selection.page_id,
+            mapping: GlyphMapping::SequentialFromCode(self.active.selection.code),
+            size_conversion: GlyphSizeConversion::RequireExact,
+        };
+        match paste_glyphs(&mut self.active.content, &request) {
+            Ok(change_set) => {
+                self.record(change_set);
+                Ok(())
+            }
+            Err(err) => Err(format!("Paste failed: {err}")),
+        }
+    }
+
     fn selected_character_set_id(&self) -> Option<CharacterSetId> {
         Some(
             self.active
@@ -505,6 +555,11 @@ impl AppState {
 
     /// Sets the status strip to an error message (e.g. a failed save/open).
     pub fn set_error(&mut self, message: impl Into<String>) {
+        self.status = Some(message.into());
+    }
+
+    /// Sets the status strip to an informational message (e.g. a clipboard action).
+    pub fn set_status(&mut self, message: impl Into<String>) {
         self.status = Some(message.into());
     }
 
@@ -793,6 +848,45 @@ mod tests {
 
     fn editable_state() -> AppState {
         AppState::with_ids(Box::new(SequentialIdGen::new()))
+    }
+
+    #[test]
+    fn copy_selected_glyph_serializes_the_selected_cell() {
+        let state = editable_state();
+        assert_eq!(state.selection().code, 0x41); // the drawn 'A'
+        let json = state.copy_selected_glyph().unwrap();
+        let FontSpaceFragment::Glyphs(fragment) = load_fragment(&json).unwrap();
+        assert_eq!(fragment.glyphs.len(), 1);
+        assert_eq!(fragment.glyphs[0].code, 0x41);
+        assert_eq!(&fragment.glyphs[0].bitmap, state.selected_bitmap().unwrap());
+    }
+
+    #[test]
+    fn copy_then_paste_lands_the_glyph_on_the_new_selection() {
+        let mut state = editable_state();
+        assert!(state.selected_pixel(2, 0)); // 'A' (0x41) has (2,0) on
+        let json = state.copy_selected_glyph().unwrap();
+
+        // Point the editor at a currently-blank code and paste there.
+        state.select_code(0x42);
+        assert!(!state.selected_pixel(2, 0));
+        state.paste_glyph_from_clipboard(&json).unwrap();
+        assert!(state.selected_pixel(2, 0)); // 0x42 now carries 'A''s pixels
+        assert!(state.can_undo());
+
+        // The paste is one undo entry.
+        state.undo();
+        assert!(!state.selected_pixel(2, 0));
+    }
+
+    #[test]
+    fn paste_of_non_fragment_text_is_reported_not_panicking() {
+        let mut state = editable_state();
+        let err = state
+            .paste_glyph_from_clipboard("not a fragment")
+            .unwrap_err();
+        assert!(err.contains("not a glyph fragment"), "{err}");
+        assert!(!state.can_undo()); // nothing changed
     }
 
     #[test]

@@ -76,6 +76,7 @@ impl FontSpaceApp {
     /// `egui_kittest` snapshot harness calls it directly (spec/15 §15.6).
     pub fn show(&mut self, ui: &mut egui::Ui) {
         self.handle_shortcuts(ui.ctx());
+        self.handle_clipboard(ui.ctx());
 
         // Reflect the document name and dirty state in the OS window title (spec/12
         // §12.12), but only when it changes — a per-frame viewport command would keep
@@ -132,6 +133,14 @@ impl FontSpaceApp {
                         .clicked()
                     {
                         self.state.redo();
+                        ui.close();
+                    }
+                    ui.separator();
+                    // Copy writes the selected glyph to the clipboard as fragment JSON.
+                    // Paste is keyboard-driven (Cmd/Ctrl+V) since egui only exposes the
+                    // clipboard contents through its paste event (spec/08 §8.2).
+                    if ui.button("Copy glyph").clicked() {
+                        self.copy_selected_glyph(ui.ctx());
                         ui.close();
                     }
                 });
@@ -247,6 +256,52 @@ impl FontSpaceApp {
         }
         if do_close {
             self.action_close();
+        }
+    }
+
+    /// Copy/paste of the selected glyph via the system clipboard (spec/08 §8.2,
+    /// spec/12 §12.5). egui delivers `Cmd/Ctrl+C`/`V` as `Copy`/`Paste` events carrying
+    /// the clipboard text on paste. Copy writes the selected glyph as fragment JSON;
+    /// paste applies a clipboard fragment onto the current selection.
+    ///
+    /// **A focused text field wins.** egui does not *consume* these events, so a
+    /// focused `TextEdit` (e.g. the text-preview sample field) reads the same
+    /// `Copy`/`Paste` on the same frame. If we also acted, a paste would both insert
+    /// text *and* mutate the glyph — so we stand down entirely while a text edit has
+    /// focus (`ctx.text_edit_focused()`), letting the widget own the clipboard.
+    fn handle_clipboard(&mut self, ctx: &egui::Context) {
+        if ctx.text_edit_focused() {
+            return;
+        }
+        let (want_copy, pasted) = ctx.input(|i| {
+            let mut want_copy = false;
+            let mut pasted = None;
+            for event in &i.events {
+                match event {
+                    egui::Event::Copy => want_copy = true,
+                    egui::Event::Paste(text) => pasted = Some(text.clone()),
+                    _ => {}
+                }
+            }
+            (want_copy, pasted)
+        });
+        if want_copy {
+            self.copy_selected_glyph(ctx);
+        }
+        if let Some(text) = pasted {
+            match self.state.paste_glyph_from_clipboard(&text) {
+                Ok(()) => self.state.set_status("Pasted glyph"),
+                Err(message) => self.state.set_error(message),
+            }
+        }
+    }
+
+    /// Writes the selected glyph to the system clipboard as fragment JSON (spec/08
+    /// §8.2). Shared by the `Cmd/Ctrl+C` handler and the Edit ▸ Copy glyph menu item.
+    fn copy_selected_glyph(&mut self, ctx: &egui::Context) {
+        if let Some(fragment) = self.state.copy_selected_glyph() {
+            ctx.copy_text(fragment);
+            self.state.set_status("Copied glyph to clipboard");
         }
     }
 
