@@ -17,6 +17,24 @@ const THUMB: f32 = 40.0;
 const LABEL_H: f32 = 16.0;
 const SELECTED: Color32 = Color32::from_rgb(255, 200, 60);
 const DANGLING: Color32 = Color32::from_rgb(230, 110, 90);
+/// The drag-selected range highlight (spec/12 §12.8) — a cool tint so it reads apart
+/// from the warm `SELECTED` outline on the active editor code.
+const RANGE: Color32 = Color32::from_rgb(150, 190, 255);
+
+/// The inclusive slice of `ordered` codes between `a` and `b` (in either drag order),
+/// in display order (spec/12 §12.8). Empty when either endpoint is absent from the
+/// list, so a stale anchor never yields a bogus range.
+pub fn codes_between(ordered: &[u32], a: u32, b: u32) -> Vec<u32> {
+    let ia = ordered.iter().position(|&code| code == a);
+    let ib = ordered.iter().position(|&code| code == b);
+    match (ia, ib) {
+        (Some(i), Some(j)) => {
+            let (lo, hi) = (i.min(j), i.max(j));
+            ordered[lo..=hi].to_vec()
+        }
+        _ => Vec::new(),
+    }
+}
 
 /// One overview cell: a `code`, whether it has a character-set entry, and whether a
 /// glyph is stored for it on the page.
@@ -63,10 +81,40 @@ pub fn overview_entries(
     entries
 }
 
-/// Renders the page overview and applies a thumbnail click to the selection.
+/// Renders the page overview, drives drag-select of a code range (spec/12 §12.8), and
+/// applies a plain thumbnail click to the selection.
 pub fn show_page_overview(ui: &mut egui::Ui, state: &mut AppState) {
     let selected_code = state.selection().code;
+    let range: Vec<u32> = state.page_glyph_selection().to_vec();
+
+    // Multi-glyph copy bar — shown only while a range is drag-selected, so the view is
+    // unchanged until you drag (keeping the default snapshot intact).
+    if !range.is_empty() {
+        let n = range.len();
+        let plural = if n == 1 { "" } else { "s" };
+        ui.horizontal(|ui| {
+            ui.label(format!("{n} glyph{plural} selected"));
+            if ui.button("Copy").clicked()
+                && let Some(fragment) = state.copy_page_selection()
+            {
+                ui.ctx().copy_text(fragment);
+                state.set_status(format!("Copied {n} glyph{plural} to clipboard"));
+            }
+            if ui.button("Clear").clicked() {
+                state.clear_page_selection();
+            }
+        });
+        ui.separator();
+    }
+
     let mut clicked = None;
+    let mut drag_started_on = None;
+    // Each thumbnail's rect, so an ongoing drag can resolve the code under the pointer
+    // (a drag stays captured by its origin widget, so neighbours never see it).
+    let mut cells: Vec<(u32, Rect)> = Vec::new();
+    let ordered: Vec<u32>;
+    let pointer = ui.input(|i| i.pointer.interact_pos());
+    let released = ui.input(|i| i.pointer.any_released());
 
     {
         let doc = state.document();
@@ -81,6 +129,7 @@ pub fn show_page_overview(ui: &mut egui::Ui, state: &mut AppState) {
         let character_set = doc.character_set(glyph_set.character_set_id);
         let entries = overview_entries(character_set, page);
         let size = glyph_set.glyph_size;
+        ordered = entries.iter().map(|entry| entry.code).collect();
 
         ui.horizontal(|ui| {
             ui.strong(&page.name);
@@ -95,17 +144,39 @@ pub fn show_page_overview(ui: &mut egui::Ui, state: &mut AppState) {
                 ui.horizontal_wrapped(|ui| {
                     for entry in &entries {
                         let bitmap = page.glyph_of_code(entry.code).map(|g| &g.bitmap);
-                        let response =
-                            thumbnail(ui, entry, bitmap, size, entry.code == selected_code)
-                                .on_hover_text(glyph_tooltip(entry.code, character_set));
+                        let selected = entry.code == selected_code;
+                        let in_range = range.contains(&entry.code);
+                        let response = thumbnail(ui, entry, bitmap, size, selected, in_range)
+                            .on_hover_text(glyph_tooltip(entry.code, character_set));
+                        cells.push((entry.code, response.rect));
                         if response.clicked() {
                             clicked = Some(entry.code);
+                        }
+                        if response.drag_started() {
+                            drag_started_on = Some(entry.code);
                         }
                     }
                 });
             });
     }
 
+    // Apply the resolved gesture to the selection state (after the doc borrow ends).
+    if let Some(code) = drag_started_on {
+        state.begin_page_selection(code);
+    }
+    if state.is_page_selecting() {
+        if let (Some(anchor), Some(pos)) = (state.page_selection_anchor(), pointer)
+            && let Some(&(code, _)) = cells.iter().find(|(_, rect)| rect.contains(pos))
+        {
+            let run = codes_between(&ordered, anchor, code);
+            if !run.is_empty() {
+                state.set_page_selection_range(run);
+            }
+        }
+        if released {
+            state.end_page_selection();
+        }
+    }
     if let Some(code) = clicked {
         state.select_code(code);
     }
@@ -118,9 +189,10 @@ fn thumbnail(
     bitmap: Option<&Bitmap>,
     size: GlyphSize,
     selected: bool,
+    in_range: bool,
 ) -> egui::Response {
     let (rect, response) =
-        ui.allocate_exact_size(Vec2::new(THUMB, THUMB + LABEL_H), Sense::click());
+        ui.allocate_exact_size(Vec2::new(THUMB, THUMB + LABEL_H), Sense::click_and_drag());
     let painter = ui.painter_at(rect);
 
     // Glyph square at the top of the cell.
@@ -145,7 +217,17 @@ fn thumbnail(
         label_color,
     );
 
-    // Selection outline, and a hover cue.
+    // Range-selection tint (drawn under the active-code outline so both can show on the
+    // anchor cell), then the selection outline, then a hover cue.
+    if in_range {
+        painter.rect_filled(square, CornerRadius::ZERO, RANGE.linear_multiply(0.25));
+        painter.rect_stroke(
+            square,
+            CornerRadius::ZERO,
+            Stroke::new(1.0, RANGE),
+            egui::StrokeKind::Inside,
+        );
+    }
     if selected {
         painter.rect_stroke(
             square,
@@ -153,7 +235,7 @@ fn thumbnail(
             Stroke::new(2.0, SELECTED),
             egui::StrokeKind::Inside,
         );
-    } else if response.hovered() {
+    } else if !in_range && response.hovered() {
         painter.rect_stroke(
             square,
             CornerRadius::ZERO,
@@ -250,5 +332,34 @@ mod tests {
         let entries = overview_entries(None, &page);
         assert_eq!(entries.len(), 1);
         assert!(!entries[0].in_character_set);
+    }
+
+    #[test]
+    fn codes_between_spans_the_inclusive_run_in_display_order() {
+        let ordered = [0x41, 0x42, 0x43, 0x44, 0x45];
+        assert_eq!(codes_between(&ordered, 0x42, 0x44), vec![0x42, 0x43, 0x44]);
+    }
+
+    #[test]
+    fn codes_between_is_order_independent() {
+        let ordered = [0x41, 0x42, 0x43, 0x44];
+        // Dragging right-to-left yields the same display-ordered run.
+        assert_eq!(
+            codes_between(&ordered, 0x44, 0x42),
+            codes_between(&ordered, 0x42, 0x44)
+        );
+    }
+
+    #[test]
+    fn codes_between_single_endpoint_is_one_code() {
+        let ordered = [0x41, 0x42, 0x43];
+        assert_eq!(codes_between(&ordered, 0x42, 0x42), vec![0x42]);
+    }
+
+    #[test]
+    fn codes_between_absent_endpoint_is_empty() {
+        // A stale anchor (not on this page) must not produce a bogus range.
+        let ordered = [0x41, 0x42, 0x43];
+        assert!(codes_between(&ordered, 0x99, 0x42).is_empty());
     }
 }

@@ -103,6 +103,13 @@ pub struct AppState {
     /// The copied pixel region (spec/12 §12.4), a patch stamped by paste. Survives
     /// navigation (it is a clipboard), unlike the marquee. UI state, never persisted.
     region_clipboard: Option<Bitmap>,
+    /// The drag-selected run of codes in the page overview (spec/12 §12.8), in display
+    /// order; empty when nothing is range-selected. UI state, cleared when the selection
+    /// navigates to another glyph or the active document changes. Feeds multi-glyph copy.
+    page_glyph_selection: Vec<u32>,
+    /// The anchor code of an in-progress page-overview drag-select, or `None` between
+    /// drags (the counterpart to `selection_anchor` for the pixel marquee).
+    page_selection_anchor: Option<u32>,
     /// Whether the glyph-shift control wraps pixels around the opposite edge
     /// (`OverflowPolicy::Wrap`) rather than discarding them (spec/12 §12.3). UI state;
     /// default off, matching the CLI `shift` default. Wrap rotates rows/columns.
@@ -139,6 +146,8 @@ impl AppState {
             pixel_selection: None,
             selection_anchor: None,
             region_clipboard: None,
+            page_glyph_selection: Vec::new(),
+            page_selection_anchor: None,
             shift_wrap: false,
         }
     }
@@ -159,6 +168,7 @@ impl AppState {
     pub fn select_code(&mut self, code: u32) {
         self.active.selection.code = code;
         self.clear_selection(); // the marquee is tied to the glyph it was drawn on
+        self.clear_page_selection(); // a single click supersedes a range selection
     }
 
     /// Points the selection at a `(glyph_set, page)` — e.g. from clicking a page in the
@@ -198,6 +208,7 @@ impl AppState {
             code,
         };
         self.clear_selection(); // the marquee is tied to the glyph it was drawn on
+        self.clear_page_selection(); // the range was tied to the page it was drawn on
     }
 
     /// The current value of pixel `(x, y)` on the selected glyph (`false` if the
@@ -287,6 +298,48 @@ impl AppState {
     pub fn clear_selection(&mut self) {
         self.pixel_selection = None;
         self.selection_anchor = None;
+    }
+
+    // --- Page-overview range selection (spec/12 §12.8). Drag-select a run of glyph
+    // codes to copy them together as one multi-glyph fragment. ---
+
+    /// The drag-selected run of codes in the page overview, in display order (empty when
+    /// nothing is range-selected).
+    pub fn page_glyph_selection(&self) -> &[u32] {
+        &self.page_glyph_selection
+    }
+
+    /// Whether a page-overview drag-select is in progress (an anchor is held).
+    pub fn is_page_selecting(&self) -> bool {
+        self.page_selection_anchor.is_some()
+    }
+
+    /// The anchor code of the in-progress drag-select, for the view to resolve the range.
+    pub fn page_selection_anchor(&self) -> Option<u32> {
+        self.page_selection_anchor
+    }
+
+    /// Begins a page-overview drag-select anchored at `code` (a one-code run to start).
+    pub fn begin_page_selection(&mut self, code: u32) {
+        self.page_selection_anchor = Some(code);
+        self.page_glyph_selection = vec![code];
+    }
+
+    /// Sets the drag-selected run to `codes` (the view resolves the inclusive range from
+    /// the anchor against its ordered entries — spec/12 §12.8).
+    pub fn set_page_selection_range(&mut self, codes: Vec<u32>) {
+        self.page_glyph_selection = codes;
+    }
+
+    /// Ends the drag; the range persists until cleared, re-selected, or navigated away.
+    pub fn end_page_selection(&mut self) {
+        self.page_selection_anchor = None;
+    }
+
+    /// Clears the page-overview range selection.
+    pub fn clear_page_selection(&mut self) {
+        self.page_glyph_selection.clear();
+        self.page_selection_anchor = None;
     }
 
     /// Mirrors the selected region in place (`dir`) as one undo entry — the "reverse"
@@ -610,20 +663,61 @@ impl AppState {
     /// no longer resolves. An undrawn cell copies as a blank glyph of the set's
     /// geometry — pasting it elsewhere clears that target.
     pub fn copy_selected_glyph(&self) -> Option<String> {
+        self.fragment_for_codes(&[self.active.selection.code])
+    }
+
+    /// Serializes the page-overview range selection as a multi-glyph fragment for the
+    /// clipboard (spec/12 §12.8), in display order. Undrawn codes in the run copy as
+    /// blank glyphs so the block's layout is preserved on paste. `None` when nothing is
+    /// range-selected or the selection no longer resolves.
+    pub fn copy_page_selection(&self) -> Option<String> {
+        if self.page_glyph_selection.is_empty() {
+            return None;
+        }
+        self.fragment_for_codes(&self.page_glyph_selection)
+    }
+
+    /// The fragment JSON the clipboard should carry for `Cmd/Ctrl+C`: the page-overview
+    /// range when one is drag-selected, otherwise the single selected glyph.
+    pub fn copy_glyphs_for_clipboard(&self) -> Option<String> {
+        if self.page_glyph_selection.is_empty() {
+            self.copy_selected_glyph()
+        } else {
+            self.copy_page_selection()
+        }
+    }
+
+    /// Builds a canonical glyph-fragment JSON for `codes` (in the given order) from the
+    /// current page (spec/08 §8.2). Each undrawn code copies as a blank glyph of the
+    /// set's geometry — pasting it elsewhere clears that target. `None` if the selection
+    /// no longer resolves or `codes` is empty.
+    fn fragment_for_codes(&self, codes: &[u32]) -> Option<String> {
+        if codes.is_empty() {
+            return None;
+        }
         let (glyph_set, page) = self.selected_context()?;
-        let code = self.active.selection.code;
-        let bitmap = page
-            .glyph_of_code(code)
-            .map(|glyph| glyph.bitmap.clone())
-            .unwrap_or_else(|| Bitmap::new_blank(glyph_set.glyph_size));
-        let label = self.selected_label().unwrap_or_default().to_string();
+        let character_set = self.selected_character_set();
+        let glyphs = codes
+            .iter()
+            .map(|&code| {
+                let bitmap = page
+                    .glyph_of_code(code)
+                    .map(|glyph| glyph.bitmap.clone())
+                    .unwrap_or_else(|| Bitmap::new_blank(glyph_set.glyph_size));
+                let label = character_set
+                    .and_then(|cs| cs.entry(code))
+                    .map(|entry| entry.label.clone())
+                    .unwrap_or_default();
+                FragmentGlyph {
+                    code,
+                    label,
+                    bitmap,
+                }
+            })
+            .collect();
         let fragment = FontSpaceFragment::Glyphs(GlyphFragment {
             source_glyph_size: glyph_set.glyph_size,
-            glyphs: vec![FragmentGlyph {
-                code,
-                label,
-                bitmap,
-            }],
+            glyphs,
         });
         Some(save_fragment(&fragment))
     }
@@ -791,6 +885,8 @@ impl AppState {
         self.active_stroke = None;
         self.pixel_selection = None; // the marquee was tied to the pre-revert glyph
         self.selection_anchor = None;
+        self.page_glyph_selection.clear();
+        self.page_selection_anchor = None;
         self.pending_remove = None;
         if let Some(selection) = default_selection(&self.active.content) {
             self.active.selection = selection;
@@ -844,6 +940,8 @@ impl AppState {
         self.active_stroke = None;
         self.pixel_selection = None;
         self.selection_anchor = None;
+        self.page_glyph_selection.clear();
+        self.page_selection_anchor = None;
         self.pending_remove = None;
         self.pending_discard = None;
     }
@@ -1092,6 +1190,67 @@ mod tests {
         // The paste is one undo entry.
         state.undo();
         assert!(!state.selected_pixel(2, 0));
+    }
+
+    #[test]
+    fn copy_page_selection_serializes_the_selected_run_in_order() {
+        let mut state = editable_state();
+        // Drag-select the run A..C (as the page overview would).
+        state.begin_page_selection(0x41);
+        state.set_page_selection_range(vec![0x41, 0x42, 0x43]);
+        assert_eq!(state.page_glyph_selection(), &[0x41, 0x42, 0x43]);
+
+        let json = state.copy_page_selection().unwrap();
+        let FontSpaceFragment::Glyphs(fragment) = load_fragment(&json).unwrap();
+        let codes: Vec<u32> = fragment.glyphs.iter().map(|g| g.code).collect();
+        assert_eq!(codes, vec![0x41, 0x42, 0x43]); // display order, blanks included
+    }
+
+    #[test]
+    fn copy_glyphs_for_clipboard_prefers_a_range_over_the_single_glyph() {
+        let mut state = editable_state();
+        // No range: falls back to the single selected glyph (one entry).
+        let single = state.copy_glyphs_for_clipboard().unwrap();
+        let FontSpaceFragment::Glyphs(one) = load_fragment(&single).unwrap();
+        assert_eq!(one.glyphs.len(), 1);
+
+        // With a range: copies the whole run.
+        state.begin_page_selection(0x41);
+        state.set_page_selection_range(vec![0x41, 0x42]);
+        let many = state.copy_glyphs_for_clipboard().unwrap();
+        let FontSpaceFragment::Glyphs(two) = load_fragment(&many).unwrap();
+        assert_eq!(two.glyphs.len(), 2);
+    }
+
+    #[test]
+    fn multi_glyph_copy_pastes_the_run_sequentially() {
+        let mut state = editable_state();
+        assert!(state.selected_pixel(2, 0)); // 'A' (0x41) has (2,0) on
+        state.begin_page_selection(0x41);
+        state.set_page_selection_range(vec![0x41, 0x42]);
+        let json = state.copy_page_selection().unwrap();
+
+        // Paste starting at a blank code: the run lands on 0x47, 0x48 sequentially.
+        state.select_code(0x47); // also clears the range (single-code navigation)
+        assert!(state.page_glyph_selection().is_empty());
+        assert!(!state.selected_pixel(2, 0));
+        state.paste_glyph_from_clipboard(&json).unwrap();
+        assert!(state.selected_pixel(2, 0)); // 0x47 now carries A's pixels
+        assert!(state.can_undo());
+        state.undo(); // one undo entry
+        assert!(!state.selected_pixel(2, 0));
+    }
+
+    #[test]
+    fn page_glyph_selection_clears_when_navigating_to_a_code() {
+        let mut state = editable_state();
+        state.begin_page_selection(0x41);
+        state.set_page_selection_range(vec![0x41, 0x42, 0x43]);
+        assert!(!state.page_glyph_selection().is_empty());
+
+        state.select_code(0x45);
+        assert!(state.page_glyph_selection().is_empty());
+        assert!(!state.is_page_selecting());
     }
 
     #[test]

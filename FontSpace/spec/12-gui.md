@@ -96,7 +96,9 @@ An ordered table showing ordinal, `code`, rendered character where printable, la
 
 ## 12.8 Page overview
 
-Every glyph in a selected page (absent codes shown blank, dangling flagged). Controls: thumbnail size, auto/fixed columns, label mode (none/character/hex/full), grid overlay, blank indicator, modified indicator, filter/range. Interactions: click selects, **hover shows the glyph's info** (hex code, character/control notation, label), double-click opens the editor, drag-select a range, copy/paste, and apply shift/clear/invert to a selection.
+Every glyph in a selected page (absent codes shown blank, dangling flagged). Controls: thumbnail size, auto/fixed columns, label mode (none/character/hex/full), grid overlay, blank indicator, modified indicator, filter/range. Interactions: click selects, **hover shows the glyph's info** (hex code, character/control notation, label), double-click opens the editor, and apply shift/clear/invert to a selection.
+
+**Drag-select and multi-glyph copy.** Dragging across thumbnails selects an inclusive **run of codes** in display order (a cool-tinted highlight, set apart from the warm active-code outline), anchored where the drag began and resolved against the ordered entries so a stale anchor never yields a bogus range. While a run is selected, a bar appears with the count and **Copy** and **Clear** buttons — copy (the Copy button or `Cmd/Ctrl+C`) writes the whole run to the clipboard as one canonical multi-glyph fragment (spec/08 §8.5), undrawn codes in the run included as blank glyphs so the block's layout is preserved; Clear drops the run. **Paste** (`Cmd/Ctrl+V`) drops a fragment onto the current page starting at the selected code (`SequentialFromCode`), so a copied run round-trips back onto another page. A single click (or navigating away) supersedes the run. The run selection is UI state, tied to the page it was drawn on; it is never persisted.
 
 ## 12.9 Character across pages and files
 
