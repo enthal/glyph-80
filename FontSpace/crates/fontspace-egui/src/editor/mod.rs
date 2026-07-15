@@ -268,6 +268,16 @@ fn region_toolbar(ui: &mut egui::Ui, state: &mut AppState) {
         if ui.button("Flip V").clicked() {
             state.flip_selection(FlipDir::TopBottom);
         }
+        if ui.button("Copy").clicked() {
+            state.copy_selection();
+        }
+        // Paste stamps the copied region with its top-left at the marquee's top-left.
+        if ui
+            .add_enabled(state.has_region_clipboard(), egui::Button::new("Paste"))
+            .clicked()
+        {
+            state.paste_region();
+        }
         if ui.button("Clear").clicked() {
             state.clear_selection();
         }

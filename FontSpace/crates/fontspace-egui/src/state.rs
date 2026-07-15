@@ -25,7 +25,7 @@ use fontspace_ops::{
 };
 
 use crate::editor::geometry::GridLevel;
-use crate::editor::region::{FlipDir, PixelRect, flip_edits};
+use crate::editor::region::{FlipDir, PixelRect, flip_edits, region_extract, stamp_edits};
 use crate::editor::stroke::Stroke;
 use crate::workspace::{DocumentId, OpenDocument};
 
@@ -97,6 +97,9 @@ pub struct AppState {
     pixel_selection: Option<PixelRect>,
     /// The fixed corner cell of an in-progress selection drag, or `None` between drags.
     selection_anchor: Option<(u16, u16)>,
+    /// The copied pixel region (spec/12 §12.4), a patch stamped by paste. Survives
+    /// navigation (it is a clipboard), unlike the marquee. UI state, never persisted.
+    region_clipboard: Option<Bitmap>,
 }
 
 impl Default for AppState {
@@ -128,6 +131,7 @@ impl AppState {
             pending_remove: None,
             pixel_selection: None,
             selection_anchor: None,
+            region_clipboard: None,
         }
     }
 
@@ -298,6 +302,55 @@ impl AppState {
                 code: self.active.selection.code,
             },
             edits: flip_edits(&bitmap, rect, dir),
+        };
+        if let Ok(change_set) = set_pixels(&mut self.active.content, &request) {
+            self.record(change_set);
+        }
+    }
+
+    /// Whether a region has been copied and can be pasted.
+    pub fn has_region_clipboard(&self) -> bool {
+        self.region_clipboard.is_some()
+    }
+
+    /// Copies the selected region's pixels to the region clipboard (spec/12 §12.4). The
+    /// clipboard survives navigation, so you can copy on one glyph and paste on another.
+    pub fn copy_selection(&mut self) {
+        let Some(rect) = self.pixel_selection else {
+            return;
+        };
+        let Some((glyph_set, _)) = self.selected_context() else {
+            return;
+        };
+        let size = glyph_set.glyph_size;
+        let bitmap = self
+            .selected_bitmap()
+            .cloned()
+            .unwrap_or_else(|| Bitmap::new_blank(size));
+        self.region_clipboard = Some(region_extract(&bitmap, rect));
+    }
+
+    /// Stamps the region clipboard onto the current glyph with its top-left at the
+    /// marquee's top-left corner, replacing those cells — one undo entry (spec/12
+    /// §12.4). A no-op with no clipboard or no selection anchor.
+    pub fn paste_region(&mut self) {
+        let Some(patch) = self.region_clipboard.clone() else {
+            return;
+        };
+        let Some(rect) = self.pixel_selection else {
+            return;
+        };
+        let Some((glyph_set, _)) = self.selected_context() else {
+            return;
+        };
+        let size = glyph_set.glyph_size;
+        let request = SetPixels {
+            target: GlyphRef {
+                glyph_set_id: self.active.selection.glyph_set_id,
+                page_id: self.active.selection.page_id,
+                code: self.active.selection.code,
+            },
+            edits: stamp_edits(&patch, (rect.x0, rect.y0), size),
         };
         if let Ok(change_set) = set_pixels(&mut self.active.content, &request) {
             self.record(change_set);
@@ -1030,6 +1083,49 @@ mod tests {
         state.undo();
         assert!(state.selected_pixel(0, 0));
         assert!(!state.selected_pixel(7, 0));
+    }
+
+    #[test]
+    fn copy_then_paste_stamps_the_region_and_is_one_undo_entry() {
+        let mut state = editable_state();
+        state.begin_stroke((0, 0)); // paint (0,0) on (column 0 is unused by 'A')
+        state.commit_stroke();
+
+        // Copy the single on-cell (0,0).
+        state.begin_selection((0, 0));
+        state.extend_selection((0, 0));
+        state.end_selection();
+        state.copy_selection();
+        assert!(state.has_region_clipboard());
+
+        // Move the marquee to an empty cell (7,7) and paste.
+        state.begin_selection((7, 7));
+        state.extend_selection((7, 7));
+        state.end_selection();
+        assert!(!state.selected_pixel(7, 7));
+        state.paste_region();
+        assert!(state.selected_pixel(7, 7)); // the on-patch stamped at (7,7)
+        assert!(state.can_undo());
+
+        state.undo(); // the paste was one undoable entry
+        assert!(!state.selected_pixel(7, 7));
+    }
+
+    #[test]
+    fn region_clipboard_survives_navigation() {
+        let mut state = editable_state();
+        state.begin_stroke((0, 0));
+        state.commit_stroke();
+        state.begin_selection((0, 0));
+        state.extend_selection((0, 0));
+        state.end_selection();
+        state.copy_selection();
+        assert!(state.has_region_clipboard());
+
+        // Navigation clears the marquee but keeps the clipboard (copy A, paste on B).
+        state.select_code(0x42);
+        assert!(state.pixel_selection().is_none());
+        assert!(state.has_region_clipboard());
     }
 
     #[test]
