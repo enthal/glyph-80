@@ -405,8 +405,8 @@ impl AppState {
     /// Shifts the whole current glyph by `(dx, dy)` as one undo entry (spec/12 §12.3),
     /// reusing the `ShiftGlyphs` domain op that backs the CLI `shift`. The overflow
     /// policy follows [`shift_wrap`](Self::shift_wrap): wrap rotates rows/columns around
-    /// the opposite edge, discard drops what falls off. A no-op when nothing is selected
-    /// or the current glyph is absent (shifting a blank glyph changes nothing).
+    /// the opposite edge, discard drops what falls off. A no-op when the current glyph is
+    /// absent or the shift changes nothing (a blank glyph, or `(0, 0)`).
     pub fn shift_glyph(&mut self, dx: i16, dy: i16) {
         let overflow = if self.shift_wrap {
             OverflowPolicy::Wrap
