@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use egui_tiles::{Tile, Tree};
 
 use crate::charset_view::show_character_set;
+use crate::document_browser::show_document_browser;
 use crate::editor::show_glyph_editor;
 use crate::layout::{Pane, default_tree, panes_in};
 use crate::page_overview::show_page_overview;
@@ -375,6 +376,7 @@ impl egui_tiles::Behavior<Pane> for PaneBehavior<'_> {
             Pane::PageOverview => show_page_overview(ui, self.state),
             Pane::CharacterSet => show_character_set(ui, self.state),
             Pane::TextPreview => show_text_preview(ui, self.state),
+            Pane::DocumentBrowser => show_document_browser(ui, self.state),
             other => placeholder(ui, *other),
         }
         egui_tiles::UiResponse::None
