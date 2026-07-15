@@ -103,7 +103,8 @@ pub fn show_page_overview(ui: &mut egui::Ui, state: &mut AppState) {
             if ui.button("Copy").clicked()
                 && let Some(fragment) = state.copy_page_selection()
             {
-                ui.ctx().copy_text(fragment);
+                ui.ctx().copy_text(fragment.clone());
+                state.set_glyph_fragment_clipboard(fragment); // back paste-by-code
                 state.set_status(format!("Copied {n} glyph{plural} to clipboard"));
             }
             if ui.button("Blank").clicked() {
@@ -140,6 +141,9 @@ pub fn show_page_overview(ui: &mut egui::Ui, state: &mut AppState) {
 
     let mut clicked = None;
     let mut drag_started_on = None;
+    let mut paste_by_code = false;
+    // Whether a fragment has been copied this session (drives the paste-by-code button).
+    let can_paste = state.has_glyph_fragment_clipboard();
     // Each thumbnail's rect, so an ongoing drag can resolve the code under the pointer
     // (a drag stays captured by its origin widget, so neighbours never see it).
     let mut cells: Vec<(u32, Rect)> = Vec::new();
@@ -166,6 +170,14 @@ pub fn show_page_overview(ui: &mut egui::Ui, state: &mut AppState) {
             ui.strong(&page.name);
             ui.separator();
             ui.label(format!("{} codes", entries.len()));
+            // Paste-by-code lands each copied glyph on its own code; shown once you've
+            // copied glyphs this session (an in-app fragment clipboard).
+            if can_paste {
+                ui.separator();
+                if ui.button("Paste (by code)").clicked() {
+                    paste_by_code = true;
+                }
+            }
         });
         ui.separator();
 
@@ -210,6 +222,14 @@ pub fn show_page_overview(ui: &mut egui::Ui, state: &mut AppState) {
     }
     if let Some(code) = clicked {
         state.select_code(code);
+    }
+    if paste_by_code {
+        match state.paste_glyphs_by_code() {
+            Ok(count) => {
+                state.set_status(format!("Pasted {count} glyph{} by code", plural_s(count)))
+            }
+            Err(message) => state.set_error(message),
+        }
     }
 }
 

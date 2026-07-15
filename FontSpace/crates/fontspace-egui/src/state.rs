@@ -110,6 +110,12 @@ pub struct AppState {
     /// The anchor code of an in-progress page-overview drag-select, or `None` between
     /// drags (the counterpart to `selection_anchor` for the pixel marquee).
     page_selection_anchor: Option<u32>,
+    /// The last glyph(s) copied this session, as canonical fragment JSON — an in-app
+    /// clipboard (like `region_clipboard`) that backs **paste by code** (spec/12 §12.8),
+    /// distinct from the OS clipboard `Cmd/Ctrl+V` reads. Set on every copy; survives
+    /// navigation; never persisted. Same-session only (it does not see other windows or
+    /// the CLI).
+    glyph_fragment_clipboard: Option<String>,
     /// Whether the glyph-shift control wraps pixels around the opposite edge
     /// (`OverflowPolicy::Wrap`) rather than discarding them (spec/12 §12.3). UI state;
     /// default off, matching the CLI `shift` default. Wrap rotates rows/columns.
@@ -148,6 +154,7 @@ impl AppState {
             region_clipboard: None,
             page_glyph_selection: Vec::new(),
             page_selection_anchor: None,
+            glyph_fragment_clipboard: None,
             shift_wrap: false,
         }
     }
@@ -834,6 +841,46 @@ impl AppState {
         }
     }
 
+    /// Records the last copied glyph fragment in the in-app clipboard, so **paste by
+    /// code** can restamp it (spec/12 §12.8). Called on every copy (single glyph or a
+    /// page-overview run).
+    pub fn set_glyph_fragment_clipboard(&mut self, fragment: String) {
+        self.glyph_fragment_clipboard = Some(fragment);
+    }
+
+    /// Whether a fragment has been copied this session and can be pasted by code.
+    pub fn has_glyph_fragment_clipboard(&self) -> bool {
+        self.glyph_fragment_clipboard.is_some()
+    }
+
+    /// Pastes the in-app fragment clipboard onto the current page **by code** — each
+    /// copied glyph lands on its own original code (`ByCode`), unlike the `Cmd/Ctrl+V`
+    /// paste that lays a fragment sequentially from the selection (spec/12 §12.8). One
+    /// undo entry. Returns how many glyphs were placed, or a human-readable error (empty
+    /// clipboard, a geometry mismatch, or a code with no entry on the target page).
+    pub fn paste_glyphs_by_code(&mut self) -> Result<usize, String> {
+        let Some(clipboard) = self.glyph_fragment_clipboard.clone() else {
+            return Err("Nothing copied to paste".to_string());
+        };
+        let FontSpaceFragment::Glyphs(fragment) = load_fragment(&clipboard)
+            .map_err(|err| format!("Clipboard is not a glyph fragment: {err}"))?;
+        let count = fragment.glyphs.len();
+        let request = PasteGlyphs {
+            fragment,
+            target_glyph_set_id: self.active.selection.glyph_set_id,
+            target_page_id: self.active.selection.page_id,
+            mapping: GlyphMapping::ByCode,
+            size_conversion: GlyphSizeConversion::RequireExact,
+        };
+        match paste_glyphs(&mut self.active.content, &request) {
+            Ok(change_set) => {
+                self.record(change_set);
+                Ok(count)
+            }
+            Err(err) => Err(format!("Paste failed: {err}")),
+        }
+    }
+
     fn selected_character_set_id(&self) -> Option<CharacterSetId> {
         Some(
             self.active
@@ -1379,6 +1426,42 @@ mod tests {
         assert!(state.can_undo());
         state.undo();
         assert!(!state.selected_bitmap().unwrap().is_blank());
+    }
+
+    #[test]
+    fn paste_by_code_lands_each_glyph_on_its_own_code() {
+        let mut state = editable_state();
+        assert!(state.selected_pixel(2, 0)); // 'A' (0x41) is drawn
+
+        // Copy the run [0x41] into the in-app clipboard, then blank it.
+        state.begin_page_selection(0x41);
+        state.set_page_selection_range(vec![0x41]);
+        let json = state.copy_page_selection().unwrap();
+        state.set_glyph_fragment_clipboard(json);
+        assert!(state.has_glyph_fragment_clipboard());
+        state.blank_page_selection();
+        assert!(state.selected_bitmap().is_none_or(|b| b.is_blank()));
+
+        // Point the editor at a *different* code and paste by code: 'A' must land back
+        // on 0x41 (its own code), not on the selected 0x45.
+        state.select_code(0x45);
+        let count = state.paste_glyphs_by_code().unwrap();
+        assert_eq!(count, 1);
+        assert!(!state.selected_pixel(2, 0)); // 0x45 (selected) is untouched
+        state.select_code(0x41);
+        assert!(state.selected_pixel(2, 0)); // 'A' restamped onto its own code
+        assert!(state.can_undo());
+        state.undo(); // one undo entry
+        assert!(!state.selected_pixel(2, 0));
+    }
+
+    #[test]
+    fn paste_by_code_without_a_clipboard_is_reported_not_panicking() {
+        let mut state = editable_state();
+        assert!(!state.has_glyph_fragment_clipboard());
+        let err = state.paste_glyphs_by_code().unwrap_err();
+        assert!(err.contains("Nothing copied"), "{err}");
+        assert!(!state.can_undo());
     }
 
     #[test]
