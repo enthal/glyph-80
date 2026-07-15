@@ -15,6 +15,7 @@ use std::path::PathBuf;
 
 use egui_kittest::{Harness, SnapshotOptions};
 use fontspace_egui::charset_view::show_character_set;
+use fontspace_egui::document_browser::show_document_browser;
 use fontspace_egui::editor::show_glyph_editor;
 use fontspace_egui::page_overview::show_page_overview;
 use fontspace_egui::text_preview::show_text_preview;
@@ -87,6 +88,17 @@ fn page_overview() {
         .build_ui(move |ui| show_page_overview(ui, &mut state));
     harness.run();
     harness.snapshot_options("page_overview", &options());
+}
+
+#[test]
+fn document_browser() {
+    let mut state = state();
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(280.0, 420.0))
+        .wgpu()
+        .build_ui(move |ui| show_document_browser(ui, &mut state));
+    harness.run();
+    harness.snapshot_options("document_browser", &options());
 }
 
 #[test]

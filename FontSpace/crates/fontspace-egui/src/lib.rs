@@ -13,6 +13,7 @@
 
 pub mod app;
 pub mod charset_view;
+pub mod document_browser;
 pub mod editor;
 pub mod glyph_paint;
 pub mod layout;

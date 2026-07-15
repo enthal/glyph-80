@@ -128,6 +128,44 @@ impl AppState {
         self.active.selection.code = code;
     }
 
+    /// Points the selection at a `(glyph_set, page)` — e.g. from clicking a page in the
+    /// document browser (spec/12 §12.2). **Switching glyph set keeps the current code
+    /// point** whenever the target's character set has it, so navigating pages/sets
+    /// doesn't lose the user's place; only when the code isn't available there does it
+    /// fall back to the first character-set entry, else the first stored glyph, else
+    /// the current code.
+    pub fn select_page(&mut self, glyph_set_id: GlyphSetId, page_id: PageId) {
+        let current = self.active.selection.code;
+        let code = self
+            .active
+            .content
+            .glyph_set(glyph_set_id)
+            .map(|glyph_set| {
+                let character_set = self
+                    .active
+                    .content
+                    .character_set(glyph_set.character_set_id);
+                if character_set.is_some_and(|cs| cs.contains_code(current)) {
+                    current // keep the code point across the switch
+                } else {
+                    character_set
+                        .and_then(|cs| cs.entries.first().map(|entry| entry.code))
+                        .or_else(|| {
+                            glyph_set
+                                .page_of_id(page_id)
+                                .and_then(|page| page.glyphs.first().map(|glyph| glyph.code))
+                        })
+                        .unwrap_or(current)
+                }
+            })
+            .unwrap_or(current);
+        self.active.selection = Selection {
+            glyph_set_id,
+            page_id,
+            code,
+        };
+    }
+
     /// The current value of pixel `(x, y)` on the selected glyph (`false` if the
     /// glyph is absent/blank or the coordinate is out of bounds).
     pub fn selected_pixel(&self, x: u16, y: u16) -> bool {
@@ -605,6 +643,28 @@ mod tests {
         let bitmap = state.selected_bitmap().expect("A is drawn");
         assert!(!bitmap.is_blank());
         assert_eq!(state.selected_label(), Some("A"));
+    }
+
+    #[test]
+    fn select_page_keeps_the_code_point_when_the_target_set_has_it() {
+        let mut state = AppState::with_ids(Box::new(SequentialIdGen::new()));
+        let sel = state.selection();
+        // Move to a different, in-charset code (0x43 = 'C'), then reselect the page.
+        state.select_code(0x43);
+        state.select_page(sel.glyph_set_id, sel.page_id);
+        // The code point is preserved across the (re)selection.
+        assert_eq!(state.selection().code, 0x43);
+    }
+
+    #[test]
+    fn select_page_falls_back_when_the_code_point_is_absent() {
+        let mut state = AppState::with_ids(Box::new(SequentialIdGen::new()));
+        let sel = state.selection();
+        // 0x99 has no entry in the starter charset (A–H); selecting the page must land
+        // on a valid code — the first entry, 0x41.
+        state.select_code(0x99);
+        state.select_page(sel.glyph_set_id, sel.page_id);
+        assert_eq!(state.selection().code, 0x41);
     }
 
     #[test]
