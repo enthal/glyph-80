@@ -6,14 +6,14 @@ FontSpace targets **macOS and Linux** for v1 (Windows is post-v1, §18.7). It is
 
 Two separate concerns, deliberately different strings:
 
-- **`APP_ID` (reverse-DNS desktop identity)** — proposed `com.tjames.glyph80.FontSpace` (the `glyph80` component leaves room for sibling Glyph-80 apps like a future terminal; the capitalized app component follows the `dev.warp.Warp` convention). This single identity is the Wayland/X11 `app_id`, the basename of the Linux `.desktop` and icon files, the `.desktop` `Icon=` value, `StartupWMClass`, **and** the packager `identifier`. If any of these diverge, the installed launcher and the running window become two different apps (generic icon, launcher won't merge with its window). *Decision to confirm: the exact string; it must equal whatever the packager config uses.*
+- **`APP_ID` (reverse-DNS desktop identity)** — **`com.tjames.glyph80.FontSpace`** (the `glyph80` component leaves room for sibling Glyph-80 apps like a future terminal; the capitalized app component follows the `dev.warp.Warp` convention). This single identity is the Wayland/X11 `app_id`, the basename of the Linux `.desktop` and icon files, the `.desktop` `Icon=` value, `StartupWMClass`, **and** the packager `identifier`. If any of these diverge, the installed launcher and the running window become two different apps (generic icon, launcher won't merge with its window). It must equal whatever the packager config uses (§18.8). *Chosen pre-release; if a `glyph-80.com` domain is later acquired the id may migrate to a domain-based form — a low-cost change while no packages have shipped (there is no installed base to re-key), and it hardens only once §18.8 packaging ships.*
 - **Storage namespace** — proposed short, stable `fontspace`. Names the on-disk directory holding real user data: `workspace.json`, preferences, recovery snapshots (chapter 11). Kept distinct from `APP_ID` so that changing the desktop identity never moves user data.
 
 A unit test pins `APP_ID` to the packager identifier (Termica's `app_id_matches_packaged_identifier`), so the two can never silently drift.
 
 ## 18.2 App icon
 
-The window/dock/taskbar icon is embedded in the binary (`include_bytes!("../assets/app_icon.png")`) so there is no runtime file dependency. It is decoded to `egui::IconData` for the viewport, and written verbatim to the XDG icon path on Linux (§18.5). A decode failure is a cosmetic loss — degrade to no icon, never panic. **Asset to create:** `FontSpace/assets/app_icon.png` (256×256; also the source for the `.icns`/packager icons).
+The window/dock/taskbar icon is embedded in the binary (`include_bytes!("../assets/app_icon.png")`, relative to the crate's `src/`) so there is no runtime file dependency. It is decoded to `egui::IconData` for the viewport (via `eframe::icon_data::from_png_bytes`, so no extra image dependency), and written verbatim to the XDG icon path on Linux (§18.5). A decode failure is a cosmetic loss — degrade to no icon, never panic. **Asset:** `FontSpace/crates/fontspace-egui/assets/app_icon.png` (256×256 — the starter document's bitmap `A` on a dark rounded field; also the source for the `.icns`/packager icons).
 
 ## 18.3 Menus: one command registry, two presenters
 
