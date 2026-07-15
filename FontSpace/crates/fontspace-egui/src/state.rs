@@ -19,9 +19,9 @@ use fontspace_model::{
 
 use fontspace_ops::{
     AddGuide, ChangeSet, FontSpaceWarning, GlyphMapping, GlyphRef, GlyphSizeConversion, MoveGuide,
-    PasteGlyphs, RemoveCharacterEntry, RemoveGuide, SetGuideVisible, SetPixels, add_guide,
-    apply_change_set, move_guide, paste_glyphs, remove_character_entry, remove_guide,
-    set_guide_visible, set_pixels, undo,
+    PasteGlyphs, RemoveCharacterEntry, RemoveGuide, RenameGuide, SetGuideVisible, SetPixels,
+    add_guide, apply_change_set, move_guide, paste_glyphs, remove_character_entry, remove_guide,
+    rename_guide, set_guide_visible, set_pixels, undo,
 };
 
 use crate::editor::geometry::GridLevel;
@@ -296,6 +296,19 @@ impl AppState {
             position,
         };
         if let Ok(change_set) = move_guide(&mut self.active.content, &request) {
+            self.record(change_set);
+        }
+    }
+
+    /// Renames a guide as one undo entry (a no-op if the name is unchanged).
+    pub fn rename_guide(&mut self, guide_id: GuideId, name: String) {
+        let request = RenameGuide {
+            glyph_set_id: self.active.selection.glyph_set_id,
+            page_id: self.active.selection.page_id,
+            guide_id,
+            name,
+        };
+        if let Ok(change_set) = rename_guide(&mut self.active.content, &request) {
             self.record(change_set);
         }
     }
@@ -887,6 +900,30 @@ mod tests {
             .unwrap_err();
         assert!(err.contains("not a glyph fragment"), "{err}");
         assert!(!state.can_undo()); // nothing changed
+    }
+
+    #[test]
+    fn rename_guide_updates_the_name_and_is_one_undo_entry() {
+        let mut state = editable_state();
+        // The starter has a "baseline" guide on the selected (Regular) page.
+        let guide_id = state.selected_context().unwrap().1.guides[0].id;
+        assert_eq!(
+            state.selected_context().unwrap().1.guides[0].name,
+            "baseline"
+        );
+
+        state.rename_guide(guide_id, "cap height".to_string());
+        assert_eq!(
+            state.selected_context().unwrap().1.guides[0].name,
+            "cap height"
+        );
+        assert!(state.can_undo());
+
+        state.undo();
+        assert_eq!(
+            state.selected_context().unwrap().1.guides[0].name,
+            "baseline"
+        );
     }
 
     #[test]

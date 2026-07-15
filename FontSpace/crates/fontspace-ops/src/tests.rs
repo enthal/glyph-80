@@ -10,11 +10,12 @@ use proptest::prelude::*;
 use crate::{
     AddCharacterEntry, AddGuide, AddPage, ClearGlyphs, CopyGuideToPages, FontSpaceError,
     FontSpaceWarning, GlyphRef, GlyphSelector, InvertGlyphs, MoveGuide, PageSelector, PixelEdit,
-    RecodeCharacterEntry, RemoveCharacterEntry, RemoveGuide, RemovePages, ReorderCharacterEntries,
-    ReorderPages, SetGuideVisible, SetPixels, ShiftGlyphs, add_character_entry, add_guide,
-    add_page, clear_glyphs, copy_guide_to_pages, invert_glyphs, move_guide, recode_character_entry,
-    remove_character_entry, remove_guide, remove_pages, reorder_character_entries, reorder_pages,
-    set_guide_visible, set_pixels, shift_glyphs, undo,
+    RecodeCharacterEntry, RemoveCharacterEntry, RemoveGuide, RemovePages, RenameGuide,
+    ReorderCharacterEntries, ReorderPages, SetGuideVisible, SetPixels, ShiftGlyphs,
+    add_character_entry, add_guide, add_page, clear_glyphs, copy_guide_to_pages, invert_glyphs,
+    move_guide, recode_character_entry, remove_character_entry, remove_guide, remove_pages,
+    rename_guide, reorder_character_entries, reorder_pages, set_guide_visible, set_pixels,
+    shift_glyphs, undo,
 };
 
 struct Fixture {
@@ -746,6 +747,54 @@ fn move_guide_and_undo() {
     assert_eq!(f.doc.glyph_sets[0].pages[0].guides[0].position, 10);
     undo(&mut f.doc, &change_set).unwrap();
     assert_eq!(f.doc, after_add, "undo restores the guide position");
+}
+
+#[test]
+fn rename_guide_and_undo() {
+    let mut f = fixture();
+    add_guide(
+        &mut f.doc,
+        &AddGuide {
+            glyph_set_id: f.glyph_set,
+            page_id: f.regular,
+            name: "h-guide".into(),
+            axis: GuideAxis::Horizontal,
+            position: 6,
+            visible: true,
+            locked: false,
+        },
+        &mut f.ids,
+    )
+    .unwrap();
+    let guide_id = f.doc.glyph_sets[0].pages[0].guides[0].id;
+    let after_add = f.doc.clone();
+
+    let change_set = rename_guide(
+        &mut f.doc,
+        &RenameGuide {
+            glyph_set_id: f.glyph_set,
+            page_id: f.regular,
+            guide_id,
+            name: "Baseline".into(),
+        },
+    )
+    .unwrap();
+    assert_eq!(f.doc.glyph_sets[0].pages[0].guides[0].name, "Baseline");
+    undo(&mut f.doc, &change_set).unwrap();
+    assert_eq!(f.doc, after_add, "undo restores the guide name");
+
+    // Renaming to the current name is a no-op change set.
+    let noop = rename_guide(
+        &mut f.doc,
+        &RenameGuide {
+            glyph_set_id: f.glyph_set,
+            page_id: f.regular,
+            guide_id,
+            name: "h-guide".into(),
+        },
+    )
+    .unwrap();
+    assert!(noop.is_empty());
 }
 
 #[test]

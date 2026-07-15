@@ -42,8 +42,8 @@ pub use glyph_ops::{
     invert_glyphs, set_pixels, shift_glyphs,
 };
 pub use guide_ops::{
-    AddGuide, CopyGuideToPages, MoveGuide, RemoveGuide, SetGuideVisible, add_guide,
-    copy_guide_to_pages, move_guide, remove_guide, set_guide_visible,
+    AddGuide, CopyGuideToPages, MoveGuide, RemoveGuide, RenameGuide, SetGuideVisible, add_guide,
+    copy_guide_to_pages, move_guide, remove_guide, rename_guide, set_guide_visible,
 };
 pub use page_ops::{AddPage, RemovePages, ReorderPages, add_page, remove_pages, reorder_pages};
 pub use selector::{GlyphSelector, PageSelector, resolve_glyph_codes_in, resolve_pages_in};
