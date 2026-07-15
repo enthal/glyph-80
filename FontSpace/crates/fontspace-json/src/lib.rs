@@ -15,6 +15,7 @@
 //! structural problems fail the load.
 
 mod error;
+pub mod file;
 mod pixels;
 mod storage;
 
@@ -28,6 +29,7 @@ use fontspace_model::{
 use uuid::Uuid;
 
 pub use error::JsonError;
+pub use file::{ReadError, read_document, write_document};
 
 use pixels::{RowError, format_code, format_rows, parse_code, parse_rows};
 use storage::*;
