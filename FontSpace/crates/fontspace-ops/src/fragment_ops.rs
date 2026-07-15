@@ -9,7 +9,9 @@
 //! rejects a geometry difference). Like every operation, a paste validates all
 //! targets before mutating, so a failure leaves the document unchanged.
 
-use fontspace_model::{Bitmap, FontSpace, FragmentGlyph, GlyphFragment, GlyphSetId, PageId};
+use fontspace_model::{
+    Bitmap, FontSpace, FragmentGlyph, GlyphFragment, GlyphSetId, GlyphSize, PageId, placed,
+};
 
 use crate::apply_change_set;
 use crate::change_set::{ChangeSet, GlyphChange, ObjectChange};
@@ -27,13 +29,22 @@ pub enum GlyphMapping {
 }
 
 /// How a size difference between the fragment and the destination geometry is
-/// resolved (spec/08 §8.3). The default `RequireExact` never resizes; `PlaceAt`,
-/// `Center`, `Crop`, and `ScaleNearest` arrive with the size-conversion slice.
+/// resolved (spec/08 §8.3). The default `RequireExact` never resizes. `PlaceAt` and
+/// `Center` are lossless placements (no resampling): the source pixels are copied
+/// into a blank destination-size glyph, clipping whatever falls outside. `Crop` and
+/// `ScaleNearest` arrive with a later slice.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum GlyphSizeConversion {
     /// Refuse any geometry difference — the safe default (spec/08 §8.3).
     #[default]
     RequireExact,
+    /// Place the source's top-left pixel at `(x, y)` in the destination glyph,
+    /// clipping anything outside. Offsets may be negative.
+    PlaceAt { x: i16, y: i16 },
+    /// Place the source centered in the destination (equal margins, cropping
+    /// symmetrically when the source is larger). Odd differences floor toward the
+    /// top-left.
+    Center,
 }
 
 /// A request to copy glyphs off one page into a fragment.
@@ -126,32 +137,30 @@ pub fn paste_glyphs(doc: &mut FontSpace, req: &PasteGlyphs) -> Result<ChangeSet,
                 })?;
 
         let target_size = glyph_set.glyph_size;
-        // Geometry policy: `RequireExact` refuses any size difference — no silent
-        // resize (spec/08 §8.3). We check both the fragment's declared
-        // `source_glyph_size` *and* every glyph's actual bitmap size, so a
-        // malformed fragment (e.g. from a future clipboard/JSON loader, spec/08
-        // §8.2) can never smuggle a wrong-size glyph past the geometry-agreement
-        // invariant (spec/17). The per-glyph check moves into the size-conversion
-        // arms once resizing conversions land.
-        match req.size_conversion {
-            GlyphSizeConversion::RequireExact => {
-                if req.fragment.source_glyph_size != target_size {
+        // Geometry policy (spec/08 §8.3). `RequireExact` refuses any size difference —
+        // no silent resize — checking both the fragment's declared `source_glyph_size`
+        // *and* every glyph's actual bitmap size, so a malformed fragment (e.g. from an
+        // untrusted clipboard/JSON source, §8.2) can never smuggle a wrong-size glyph
+        // past the geometry-agreement invariant (spec/17). The placement conversions
+        // (`PlaceAt`/`Center`) accept any source geometry; `placed` clips whatever the
+        // source is into a `target_size` glyph, so no up-front check is needed.
+        if req.size_conversion == GlyphSizeConversion::RequireExact {
+            if req.fragment.source_glyph_size != target_size {
+                return Err(FontSpaceError::GeometryMismatch {
+                    glyph_set: req.target_glyph_set_id,
+                    page: req.target_page_id,
+                    source_size: req.fragment.source_glyph_size,
+                    target_size,
+                });
+            }
+            for glyph in &req.fragment.glyphs {
+                if glyph.bitmap.size() != target_size {
                     return Err(FontSpaceError::GeometryMismatch {
                         glyph_set: req.target_glyph_set_id,
                         page: req.target_page_id,
-                        source_size: req.fragment.source_glyph_size,
+                        source_size: glyph.bitmap.size(),
                         target_size,
                     });
-                }
-                for glyph in &req.fragment.glyphs {
-                    if glyph.bitmap.size() != target_size {
-                        return Err(FontSpaceError::GeometryMismatch {
-                            glyph_set: req.target_glyph_set_id,
-                            page: req.target_page_id,
-                            source_size: glyph.bitmap.size(),
-                            target_size,
-                        });
-                    }
                 }
             }
         }
@@ -187,7 +196,7 @@ pub fn paste_glyphs(doc: &mut FontSpace, req: &PasteGlyphs) -> Result<ChangeSet,
                 .glyph_of_code(code)
                 .map(|existing| existing.bitmap.clone())
                 .unwrap_or_else(|| Bitmap::new_blank(target_size));
-            let after = glyph.bitmap.clone();
+            let after = convert_bitmap(&glyph.bitmap, target_size, req.size_conversion);
             if after != before {
                 object_changes.push(ObjectChange::GlyphChanged(GlyphChange {
                     glyph_set_id: req.target_glyph_set_id,
@@ -207,6 +216,23 @@ pub fn paste_glyphs(doc: &mut FontSpace, req: &PasteGlyphs) -> Result<ChangeSet,
     };
     apply_change_set(doc, &change_set)?;
     Ok(change_set)
+}
+
+/// Converts a source bitmap to the destination geometry under `conversion`. Under
+/// `RequireExact` the sizes are already equal (validated by the caller), so the
+/// source is copied unchanged; the placement conversions draw it into a blank
+/// `target_size` glyph, clipping whatever falls outside (spec/08 §8.3). No resampling.
+fn convert_bitmap(src: &Bitmap, target_size: GlyphSize, conversion: GlyphSizeConversion) -> Bitmap {
+    match conversion {
+        GlyphSizeConversion::RequireExact => src.clone(),
+        GlyphSizeConversion::PlaceAt { x, y } => placed(src, target_size, x as i32, y as i32),
+        GlyphSizeConversion::Center => {
+            // Center on the source's *actual* size; odd gaps floor toward the top-left.
+            let off_x = (target_size.width as i32 - src.width() as i32) / 2;
+            let off_y = (target_size.height as i32 - src.height() as i32) / 2;
+            placed(src, target_size, off_x, off_y)
+        }
+    }
 }
 
 #[cfg(test)]
@@ -415,6 +441,129 @@ mod tests {
         );
         // Atomic: nothing was written.
         assert!(!stored_pixel(&dst, 0x41, 0, 0));
+    }
+
+    /// The stored bitmap for `code` on the destination page (materialized by paste).
+    fn stored_bitmap(fx: &Fixture, code: u32) -> fontspace_model::Bitmap {
+        fx.doc
+            .glyph_set(fx.glyph_set_id)
+            .unwrap()
+            .page_of_id(fx.page_id)
+            .unwrap()
+            .glyph_of_code(code)
+            .unwrap()
+            .bitmap
+            .clone()
+    }
+
+    #[test]
+    fn paste_place_at_offsets_into_a_larger_destination() {
+        // Source is 8×8 with (0,0) on; destination 8×16. PlaceAt {0, 5} moves the lone
+        // pixel to (0,5), and the stored glyph takes the destination geometry.
+        let mut src = fixture(GlyphSize::new(8, 8), &[0x41]);
+        draw(&mut src, 0x41, 0, 0);
+        let fragment = extract_glyphs(
+            &src.doc,
+            &ExtractGlyphs {
+                glyph_set_id: src.glyph_set_id,
+                page_id: src.page_id,
+                glyphs: GlyphSelector::All,
+            },
+        )
+        .unwrap();
+
+        let mut dst = fixture(GlyphSize::new(8, 16), &[0x41]);
+        paste_glyphs(
+            &mut dst.doc,
+            &PasteGlyphs {
+                fragment,
+                target_glyph_set_id: dst.glyph_set_id,
+                target_page_id: dst.page_id,
+                mapping: GlyphMapping::ByCode,
+                size_conversion: GlyphSizeConversion::PlaceAt { x: 0, y: 5 },
+            },
+        )
+        .unwrap();
+
+        let bitmap = stored_bitmap(&dst, 0x41);
+        assert_eq!(bitmap.size(), GlyphSize::new(8, 16));
+        assert!(bitmap.get(0, 5).unwrap());
+        assert_eq!(bitmap.count_on(), 1);
+    }
+
+    #[test]
+    fn paste_center_centers_a_smaller_source() {
+        // Source 4×4 with (0,0) on; destination 8×8. Center offset is (2,2), so the
+        // pixel lands at (2,2).
+        let mut src = fixture(GlyphSize::new(4, 4), &[0x41]);
+        draw(&mut src, 0x41, 0, 0);
+        let fragment = extract_glyphs(
+            &src.doc,
+            &ExtractGlyphs {
+                glyph_set_id: src.glyph_set_id,
+                page_id: src.page_id,
+                glyphs: GlyphSelector::All,
+            },
+        )
+        .unwrap();
+
+        let mut dst = fixture(GlyphSize::new(8, 8), &[0x41]);
+        paste_glyphs(
+            &mut dst.doc,
+            &PasteGlyphs {
+                fragment,
+                target_glyph_set_id: dst.glyph_set_id,
+                target_page_id: dst.page_id,
+                mapping: GlyphMapping::ByCode,
+                size_conversion: GlyphSizeConversion::Center,
+            },
+        )
+        .unwrap();
+
+        let bitmap = stored_bitmap(&dst, 0x41);
+        assert_eq!(bitmap.size(), GlyphSize::new(8, 8));
+        assert!(bitmap.get(2, 2).unwrap());
+        assert_eq!(bitmap.count_on(), 1);
+    }
+
+    #[test]
+    fn paste_center_crops_a_larger_source_symmetrically() {
+        // Source 4×4, destination 2×2: Center offset is (2-4)/2 = -1, so the middle
+        // 2×2 (source cols/rows 1,2) survives and the outer ring is cropped. Source
+        // (1,1) and (2,2) land at dest (0,0) and (1,1); (0,0) and (3,3) are dropped.
+        let mut src = fixture(GlyphSize::new(4, 4), &[0x41]);
+        draw(&mut src, 0x41, 0, 0); // cropped away
+        draw(&mut src, 0x41, 1, 1); // → dest (0,0)
+        draw(&mut src, 0x41, 2, 2); // → dest (1,1)
+        draw(&mut src, 0x41, 3, 3); // cropped away
+        let fragment = extract_glyphs(
+            &src.doc,
+            &ExtractGlyphs {
+                glyph_set_id: src.glyph_set_id,
+                page_id: src.page_id,
+                glyphs: GlyphSelector::All,
+            },
+        )
+        .unwrap();
+
+        let mut dst = fixture(GlyphSize::new(2, 2), &[0x41]);
+        paste_glyphs(
+            &mut dst.doc,
+            &PasteGlyphs {
+                fragment,
+                target_glyph_set_id: dst.glyph_set_id,
+                target_page_id: dst.page_id,
+                mapping: GlyphMapping::ByCode,
+                size_conversion: GlyphSizeConversion::Center,
+            },
+        )
+        .unwrap();
+
+        let bitmap = stored_bitmap(&dst, 0x41);
+        assert_eq!(bitmap.size(), GlyphSize::new(2, 2));
+        assert!(bitmap.get(0, 0).unwrap());
+        assert!(bitmap.get(1, 1).unwrap());
+        assert_eq!(bitmap.count_on(), 2); // the outer ring was cropped
     }
 
     #[test]

@@ -659,3 +659,52 @@ fn cli_paste_missing_fragment_names_the_path() {
     );
     fs::remove_dir_all(path.parent().unwrap()).ok();
 }
+
+#[test]
+fn cli_paste_size_conversion_matches_library() {
+    let (fragment, dest) = paste_fixture();
+    let glyph_set_id = dest.glyph_sets[0].id;
+    let page_id = dest.glyph_sets[0].pages[0].id;
+
+    // PlaceAt {1, 1} shifts the fragment's content down-right by one (same geometry).
+    let mut via_library = dest.clone();
+    paste_glyphs(
+        &mut via_library,
+        &PasteGlyphs {
+            fragment: fragment.clone(),
+            target_glyph_set_id: glyph_set_id,
+            target_page_id: page_id,
+            mapping: GlyphMapping::ByCode,
+            size_conversion: GlyphSizeConversion::PlaceAt { x: 1, y: 1 },
+        },
+    )
+    .unwrap();
+    let expected = fontspace_json::save(&via_library);
+
+    let path = temp_path("paste-size");
+    fs::write(&path, fontspace_json::save(&dest)).unwrap();
+    let frag_path = path.parent().unwrap().join("fragment.json");
+    fs::write(
+        &frag_path,
+        fontspace_json::save_fragment(&FontSpaceFragment::Glyphs(fragment)),
+    )
+    .unwrap();
+    let status = Command::new(env!("CARGO_BIN_EXE_fontspace"))
+        .args([
+            "paste",
+            path.to_str().unwrap(),
+            "--fragment",
+            frag_path.to_str().unwrap(),
+            "--glyph-set",
+            "gs",
+            "--page",
+            "Regular",
+            "--size",
+            "place-at:1,1",
+        ])
+        .status()
+        .unwrap();
+    assert!(status.success());
+    assert_eq!(fs::read_to_string(&path).unwrap(), expected);
+    fs::remove_dir_all(path.parent().unwrap()).ok();
+}
