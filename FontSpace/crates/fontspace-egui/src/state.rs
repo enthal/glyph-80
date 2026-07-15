@@ -18,11 +18,11 @@ use fontspace_model::{
 };
 
 use fontspace_ops::{
-    AddGuide, ChangeSet, FontSpaceWarning, GlyphMapping, GlyphRef, GlyphSelector,
-    GlyphSizeConversion, MoveGuide, PageSelector, PasteGlyphs, RemoveCharacterEntry, RemoveGuide,
-    RenameGuide, SetGuideVisible, SetPixels, ShiftGlyphs, add_guide, apply_change_set, move_guide,
-    paste_glyphs, remove_character_entry, remove_guide, rename_guide, set_guide_visible,
-    set_pixels, shift_glyphs, undo,
+    AddGuide, ChangeSet, ClearGlyphs, FontSpaceWarning, GlyphMapping, GlyphRef, GlyphSelector,
+    GlyphSizeConversion, InvertGlyphs, MoveGuide, PageSelector, PasteGlyphs, RemoveCharacterEntry,
+    RemoveGuide, RenameGuide, SetGuideVisible, SetPixels, ShiftGlyphs, add_guide, apply_change_set,
+    clear_glyphs, invert_glyphs, move_guide, paste_glyphs, remove_character_entry, remove_guide,
+    rename_guide, set_guide_visible, set_pixels, shift_glyphs, undo,
 };
 
 use crate::editor::geometry::GridLevel;
@@ -340,6 +340,56 @@ impl AppState {
     pub fn clear_page_selection(&mut self) {
         self.page_glyph_selection.clear();
         self.page_selection_anchor = None;
+    }
+
+    /// The selected run restricted to codes that have a character-set entry — the batch
+    /// transforms below are charset-resolved, so a **dangling** code in the run (stored
+    /// but not in the set) is left out rather than failing the whole op. Preserves the
+    /// run's display order.
+    fn charset_codes_in_page_selection(&self) -> Vec<u32> {
+        let character_set = self.selected_character_set();
+        self.page_glyph_selection
+            .iter()
+            .copied()
+            .filter(|code| character_set.is_some_and(|cs| cs.contains_code(*code)))
+            .collect()
+    }
+
+    /// Blanks every stored glyph in the page-overview run as one undo entry (spec/12
+    /// §12.8), reusing the `ClearGlyphs` batch op. Absent glyphs are left untouched
+    /// (not materialized); a no-op when the run is empty or all dangling.
+    pub fn blank_page_selection(&mut self) {
+        let codes = self.charset_codes_in_page_selection();
+        if codes.is_empty() {
+            return;
+        }
+        let request = ClearGlyphs {
+            glyph_set_id: self.active.selection.glyph_set_id,
+            pages: PageSelector::Id(self.active.selection.page_id),
+            glyphs: GlyphSelector::Codes(codes),
+        };
+        if let Ok(change_set) = clear_glyphs(&mut self.active.content, &request) {
+            self.record(change_set);
+        }
+    }
+
+    /// Inverts (toggles every pixel of) each stored glyph in the page-overview run as
+    /// one undo entry (spec/12 §12.8), reusing the `InvertGlyphs` batch op. Absent
+    /// glyphs are left untouched — invert does not fill blank codes with all-on glyphs
+    /// (spec/07 §7.5). A no-op when the run is empty or all dangling.
+    pub fn invert_page_selection(&mut self) {
+        let codes = self.charset_codes_in_page_selection();
+        if codes.is_empty() {
+            return;
+        }
+        let request = InvertGlyphs {
+            glyph_set_id: self.active.selection.glyph_set_id,
+            pages: PageSelector::Id(self.active.selection.page_id),
+            glyphs: GlyphSelector::Codes(codes),
+        };
+        if let Ok(change_set) = invert_glyphs(&mut self.active.content, &request) {
+            self.record(change_set);
+        }
     }
 
     /// Mirrors the selected region in place (`dir`) as one undo entry — the "reverse"
@@ -1239,6 +1289,37 @@ mod tests {
         assert!(state.can_undo());
         state.undo(); // one undo entry
         assert!(!state.selected_pixel(2, 0));
+    }
+
+    #[test]
+    fn invert_page_selection_toggles_the_run_and_is_one_undo_entry() {
+        let mut state = editable_state();
+        assert!(state.selected_pixel(2, 0)); // 'A' (0x41) has (2,0) on
+        // Select the run A..C and invert it.
+        state.begin_page_selection(0x41);
+        state.set_page_selection_range(vec![0x41, 0x42, 0x43]);
+        state.invert_page_selection();
+
+        // 0x41 is stored ('A'), so (2,0) toggles off; the op is one undo entry.
+        assert!(!state.selected_pixel(2, 0));
+        assert!(state.can_undo());
+        state.undo();
+        assert!(state.selected_pixel(2, 0));
+    }
+
+    #[test]
+    fn blank_page_selection_clears_stored_glyphs_in_the_run() {
+        let mut state = editable_state();
+        assert!(!state.selected_bitmap().unwrap().is_blank()); // 'A' is drawn
+        state.begin_page_selection(0x41);
+        state.set_page_selection_range(vec![0x41, 0x42]);
+        state.blank_page_selection();
+
+        // 'A' (0x41) is now blank; one undo entry restores it.
+        assert!(state.selected_bitmap().is_none_or(|b| b.is_blank()));
+        assert!(state.can_undo());
+        state.undo();
+        assert!(!state.selected_bitmap().unwrap().is_blank());
     }
 
     #[test]

@@ -87,18 +87,25 @@ pub fn show_page_overview(ui: &mut egui::Ui, state: &mut AppState) {
     let selected_code = state.selection().code;
     let range: Vec<u32> = state.page_glyph_selection().to_vec();
 
-    // Multi-glyph copy bar — shown only while a range is drag-selected, so the view is
-    // unchanged until you drag (keeping the default snapshot intact).
+    // Range action bar — shown only while a run is drag-selected, so the view is
+    // unchanged until you drag (keeping the default snapshot intact). Copy exports the
+    // run; Blank/Invert transform every stored glyph in it as one undo entry each.
     if !range.is_empty() {
         let n = range.len();
         let plural = if n == 1 { "" } else { "s" };
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             ui.label(format!("{n} glyph{plural} selected"));
             if ui.button("Copy").clicked()
                 && let Some(fragment) = state.copy_page_selection()
             {
                 ui.ctx().copy_text(fragment);
                 state.set_status(format!("Copied {n} glyph{plural} to clipboard"));
+            }
+            if ui.button("Blank").clicked() {
+                state.blank_page_selection();
+            }
+            if ui.button("Invert").clicked() {
+                state.invert_page_selection();
             }
             if ui.button("Clear").clicked() {
                 state.clear_page_selection();
