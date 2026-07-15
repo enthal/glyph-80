@@ -303,7 +303,9 @@ impl FontSpaceApp {
     fn copy_selected_glyph(&mut self, ctx: &egui::Context) {
         let count = self.state.page_glyph_selection().len().max(1);
         if let Some(fragment) = self.state.copy_glyphs_for_clipboard() {
-            ctx.copy_text(fragment);
+            ctx.copy_text(fragment.clone());
+            // Also stash it in the in-app clipboard, so paste-by-code can restamp it.
+            self.state.set_glyph_fragment_clipboard(fragment);
             let plural = if count == 1 { "" } else { "s" };
             self.state
                 .set_status(format!("Copied {count} glyph{plural} to clipboard"));
