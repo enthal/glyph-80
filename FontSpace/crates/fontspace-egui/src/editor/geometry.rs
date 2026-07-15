@@ -26,6 +26,22 @@ pub fn cell_size(available: Vec2, glyph: GlyphSize) -> f32 {
     by_width.min(by_height).floor().max(1.0)
 }
 
+/// Resolves a guide's stored `position` to the grid line it sits on, for a glyph of
+/// `extent` cells along the guide's axis (width for a vertical guide, height for a
+/// horizontal one). A non-negative position is that grid line directly (`0` = the
+/// top/left edge, `extent` = the bottom/right edge). A **negative** position is
+/// reckoned from the opposite edge: `-k` resolves to `extent - k`, so `-1` sits one
+/// grid line in from the bottom/right and `-extent` is the top/left edge. This lets a
+/// guide be pinned relative to the far edge — e.g. a horizontal guide at `-2` stays
+/// two pixels above the bottom whatever the glyph height (spec/12 §12.6, spec/03 §3.8).
+pub fn resolved_guide_position(position: i32, extent: u16) -> i32 {
+    if position < 0 {
+        extent as i32 + position
+    } else {
+        position
+    }
+}
+
 /// The placed glyph matrix: square cells of `cell_size`, centered in the available
 /// rectangle. All screen geometry the editor paints derives from this.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -92,12 +108,16 @@ impl MatrixGeometry {
     /// The endpoints of a guide line at grid-line `position` (spec/12 §12.6). A guide
     /// is drawn *between* pixels, on a grid line: a vertical guide at `position = n`
     /// is the vertical line left of column `n` (`x = origin.x + n·cell`); a
-    /// horizontal guide is the horizontal line above row `n`. `position` may be
-    /// negative or beyond the glyph bounds, in which case the line lies outside the
-    /// matrix.
+    /// horizontal guide is the horizontal line above row `n`. A **negative** position
+    /// is reckoned from the opposite edge (see [`resolved_guide_position`]); a position
+    /// beyond the glyph bounds draws outside the matrix.
     pub fn guide_line(&self, axis: GuideAxis, position: i32) -> (Pos2, Pos2) {
         let rect = self.matrix_rect();
-        let offset = position as f32 * self.cell_size;
+        let extent = match axis {
+            GuideAxis::Vertical => self.glyph.width,
+            GuideAxis::Horizontal => self.glyph.height,
+        };
+        let offset = resolved_guide_position(position, extent) as f32 * self.cell_size;
         match axis {
             GuideAxis::Vertical => {
                 let x = self.origin.x + offset;
@@ -181,8 +201,27 @@ mod tests {
             geom.guide_line(GuideAxis::Horizontal, 0),
             (Pos2::new(2.0, 2.0), Pos2::new(98.0, 2.0))
         );
-        // A negative position draws above the matrix (outside).
+        // A negative position is reckoned from the opposite edge: horizontal -1 in an
+        // 8-tall glyph resolves to grid line 7 → y = 2 + 7·12 = 86 (one pixel above
+        // the bottom edge at grid line 8).
         let (a, _b) = geom.guide_line(GuideAxis::Horizontal, -1);
-        assert_eq!(a.y, 2.0 - 12.0);
+        assert_eq!(a.y, 2.0 + 7.0 * 12.0);
+        // Vertical -1 in an 8-wide glyph → column grid line 7.
+        let (a, _b) = geom.guide_line(GuideAxis::Vertical, -1);
+        assert_eq!(a.x, 2.0 + 7.0 * 12.0);
+    }
+
+    #[test]
+    fn resolved_guide_position_reckons_negatives_from_the_far_edge() {
+        // Non-negative positions pass through unchanged.
+        assert_eq!(resolved_guide_position(0, 8), 0); // top/left edge
+        assert_eq!(resolved_guide_position(2, 8), 2); // 2 from top/left
+        assert_eq!(resolved_guide_position(8, 8), 8); // bottom/right edge
+        // Negatives count in from the far edge.
+        assert_eq!(resolved_guide_position(-1, 8), 7); // 1 in from bottom/right
+        assert_eq!(resolved_guide_position(-2, 8), 6); // 2 from bottom/right
+        assert_eq!(resolved_guide_position(-8, 8), 0); // == the top/left edge
+        // Beyond the extent still draws outside (no clamping).
+        assert_eq!(resolved_guide_position(-10, 8), -2);
     }
 }
