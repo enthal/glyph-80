@@ -105,6 +105,13 @@ impl FontSpaceApp {
                     }
                     ui.separator();
                     if ui
+                        .add_enabled(self.state.can_close(), egui::Button::new("Close"))
+                        .clicked()
+                    {
+                        self.action_close();
+                        ui.close();
+                    }
+                    if ui
                         .add_enabled(self.state.can_revert(), egui::Button::new("Revert"))
                         .clicked()
                     {
@@ -209,18 +216,20 @@ impl FontSpaceApp {
         let save = KeyboardShortcut::new(Modifiers::COMMAND, Key::S);
         let save_as = KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::S);
         let open = KeyboardShortcut::new(Modifiers::COMMAND, Key::O);
+        let close = KeyboardShortcut::new(Modifiers::COMMAND, Key::W);
         // Consume the Shift-modified shortcuts (redo, save-as) FIRST: egui matches
         // modifiers *logically*, so a bare-Cmd pattern (undo, save) also matches its
         // Cmd+Shift press. Claiming the Shift variant first removes that event before
         // the bare pattern can swallow it (the reverse can't misfire — a required
         // Shift can't be absent from a bare-Cmd press). Same fix as spec §12.5.
-        let (do_redo, do_save_as, do_undo, do_save, do_open) = ctx.input_mut(|i| {
+        let (do_redo, do_save_as, do_undo, do_save, do_open, do_close) = ctx.input_mut(|i| {
             (
                 i.consume_shortcut(&redo),
                 i.consume_shortcut(&save_as),
                 i.consume_shortcut(&undo),
                 i.consume_shortcut(&save),
                 i.consume_shortcut(&open),
+                i.consume_shortcut(&close),
             )
         });
         if do_redo {
@@ -235,6 +244,9 @@ impl FontSpaceApp {
         }
         if do_open {
             self.action_open();
+        }
+        if do_close {
+            self.action_close();
         }
     }
 
@@ -282,10 +294,19 @@ impl FontSpaceApp {
         }
     }
 
+    /// Close: close the active document (guarded by confirmation when it is dirty).
+    /// Proceeds immediately when clean; a no-op when it is the only open document.
+    fn action_close(&mut self) {
+        if self.state.can_close() && self.state.begin_guarded(GuardedIntent::Close) {
+            self.state.close_active();
+        }
+    }
+
     /// Runs a confirmed discard action (the user chose "Discard" in the guard modal).
     fn perform_guarded(&mut self, intent: GuardedIntent) {
         match intent {
             GuardedIntent::Revert => self.do_revert(),
+            GuardedIntent::Close => self.state.close_active(),
         }
     }
 
@@ -476,6 +497,40 @@ mod tests {
             "demo.fontspace.json - FontSpace"
         );
         assert_eq!(window_title("Untitled", true), "* Untitled - FontSpace");
+    }
+
+    #[test]
+    fn cmd_w_closes_the_active_document() {
+        // Cmd+W closes the active document when another is open, promoting the
+        // background document (spec §12.5, §12.12). A clean document needs no guard.
+        let mut app = FontSpaceApp::default();
+        let first_id = app.state.open_documents().next().unwrap().0.id;
+        let outcome = fontspace_json::LoadOutcome {
+            document: app.state.document().clone(),
+            warnings: Vec::new(),
+        };
+        app.state
+            .open_document(outcome, std::path::PathBuf::from("/tmp/b.fontspace.json"));
+        assert_eq!(app.state.open_document_count(), 2);
+
+        let ctx = egui::Context::default();
+        let raw = egui::RawInput {
+            events: vec![egui::Event::Key {
+                key: egui::Key::W,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::COMMAND,
+            }],
+            ..Default::default()
+        };
+        ctx.begin_pass(raw);
+        app.handle_shortcuts(&ctx);
+        let _ = ctx.end_pass();
+
+        // The second (active) document closed; the first is active again.
+        assert_eq!(app.state.open_document_count(), 1);
+        assert_eq!(app.state.open_documents().next().unwrap().0.id, first_id);
     }
 
     #[test]
