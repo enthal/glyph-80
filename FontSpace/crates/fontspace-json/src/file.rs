@@ -64,7 +64,12 @@ pub fn write_document(path: &Path, doc: &FontSpace) -> io::Result<()> {
     file.sync_all()?;
     drop(file);
 
-    fs::rename(&tmp, path)?;
+    // On a failed rename the original file is already safe (untouched); clean up the
+    // orphaned temp so a botched save doesn't litter a `.tmp` beside the document.
+    if let Err(err) = fs::rename(&tmp, path) {
+        let _ = fs::remove_file(&tmp);
+        return Err(err);
+    }
     Ok(())
 }
 
@@ -118,6 +123,30 @@ mod tests {
         assert!(!tmp.exists(), "temp renamed away, not left behind");
 
         let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn a_failed_rename_cleans_up_the_temp_and_reports_the_error() {
+        // Force the rename to fail by making the destination an existing directory.
+        // The original (the directory) is untouched and no `.tmp` is left behind.
+        let dir = temp_path("rename-fail-dir");
+        let _ = fs::remove_file(&dir);
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir(&dir).unwrap();
+        let tmp = {
+            let mut s = dir.clone().into_os_string();
+            s.push(".tmp");
+            PathBuf::from(s)
+        };
+
+        write_document(&dir, &sample()).expect_err("rename onto a dir fails");
+        assert!(
+            !tmp.exists(),
+            "orphaned temp cleaned up after a failed rename"
+        );
+        assert!(dir.is_dir(), "destination directory left untouched");
+
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

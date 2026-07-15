@@ -63,7 +63,9 @@ pub struct AppState {
     /// A document-replacing action awaiting unsaved-changes confirmation (spec/12
     /// §12.12), or `None` when no modal is open.
     pending_discard: Option<GuardedIntent>,
-    /// A transient message (last save/open result or error) shown in the status strip.
+    /// The most recent save/open result or error, shown in the status strip. It
+    /// persists until the next file action replaces it (the dirty marker, not this
+    /// line, is the authoritative unsaved-state signal).
     status: Option<String>,
     /// The stroke currently being dragged in the editor, if any (spec/12 §12.4).
     active_stroke: Option<Stroke>,
@@ -394,7 +396,7 @@ impl AppState {
             .unwrap_or_else(|| "Untitled".to_string())
     }
 
-    /// The transient status message (last save/open outcome or error), if any.
+    /// The status message (last save/open outcome or error), if any.
     pub fn status(&self) -> Option<&str> {
         self.status.as_deref()
     }
