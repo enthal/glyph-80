@@ -59,7 +59,7 @@ winit decides the pointer's size/theme **solely** from `XCURSOR_SIZE` / `XCURSOR
 
 Keep the platform logic testable on any CI runner (Termica's pattern):
 
-- Pure, `cfg`-independent functions: the menu command tree, `desktop_entry_contents(exec_path) -> String`, `desktop_exec_field(path) -> String` (both freedesktop escaping layers — quote `"` `` ` `` `$` `\`, and double any literal `%` so it isn't read as a `%f`/`%u` field code), and `resolve_exec_path(appimage, appdir, current_exe)`. Mark them `#[cfg_attr(not(target_os = "linux"), allow(dead_code))]` so non-Linux builds don't warn, and unit-test them on every platform.
+- Pure, `cfg`-independent functions: the menu command tree, `desktop_entry_contents(exec_path) -> String`, `desktop_exec_field(path) -> String` (both freedesktop escaping layers — quote `"` `` ` `` `$` `\`, and double any literal `%` so it isn't read as a `%f`/`%u` field code), and `resolve_exec_path(appimage, appdir, current_exe)`. Keep them warning-free on non-Linux builds — either `pub` + exercised by the cross-platform unit tests (so `dead_code` never fires) or `#[cfg_attr(not(target_os = "linux"), allow(dead_code))]` — and unit-test them on every platform. (The two escaping layers above target the realistic cases — spaces, `$`, `` ` ``, `"`; a literal `\` in an exec path additionally meets GKeyFile's own `\\`-unescape and is out of scope, being effectively nonexistent on Linux.)
 - The filesystem-touching `install_desktop_entry()` and the `muda` install are `#[cfg(target_os = ...)]`-gated; their behavior is covered by the pure helpers plus manual/integration checks.
 
 ## 18.7 Windows (post-v1)
