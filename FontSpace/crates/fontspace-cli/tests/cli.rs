@@ -7,10 +7,12 @@ use std::process::Command;
 
 use fontspace_model::OverflowPolicy;
 use fontspace_model::{
-    Bitmap, CharacterEntry, CharacterSet, FontSpace, Glyph, GlyphPage, GlyphSet, GlyphSize,
-    SequentialIdGen,
+    Bitmap, CharacterEntry, CharacterSet, FontSpace, FontSpaceFragment, Glyph, GlyphPage, GlyphSet,
+    GlyphSize, SequentialIdGen,
 };
-use fontspace_ops::{GlyphSelector, PageSelector, ShiftGlyphs, shift_glyphs};
+use fontspace_ops::{
+    ExtractGlyphs, GlyphSelector, PageSelector, ShiftGlyphs, extract_glyphs, shift_glyphs,
+};
 use fontspace_render::{
     RenderLayout, TextGridRequest, TextStringRequest, render_text_grid, render_text_string,
 };
@@ -360,5 +362,108 @@ fn cli_unknown_glyph_set_fails_without_writing() {
         original,
         "a failed op must not write"
     );
+    fs::remove_dir_all(path.parent().unwrap()).ok();
+}
+
+#[test]
+fn cli_extract_matches_library_extract() {
+    let doc = sample_doc();
+
+    // Library: extract all glyphs from Regular and serialize the fragment canonically.
+    let glyph_set_id = doc.glyph_sets[0].id;
+    let page_id = doc.glyph_sets[0].pages[0].id;
+    let fragment = extract_glyphs(
+        &doc,
+        &ExtractGlyphs {
+            glyph_set_id,
+            page_id,
+            glyphs: GlyphSelector::All,
+        },
+    )
+    .unwrap();
+    let expected = fontspace_json::save_fragment(&FontSpaceFragment::Glyphs(fragment));
+
+    // CLI: write the doc, run extract through the binary, read the fragment file.
+    let path = temp_path("extract");
+    fs::write(&path, fontspace_json::save(&doc)).unwrap();
+    let out = path.parent().unwrap().join("fragment.json");
+    let status = Command::new(env!("CARGO_BIN_EXE_fontspace"))
+        .args([
+            "extract",
+            path.to_str().unwrap(),
+            "--glyph-set",
+            "gs",
+            "--page",
+            "Regular",
+            "--output",
+            out.to_str().unwrap(),
+        ])
+        .status()
+        .unwrap();
+    assert!(status.success());
+
+    let via_cli = fs::read_to_string(&out).unwrap();
+    assert_eq!(
+        via_cli, expected,
+        "CLI extract must match library extract byte-for-byte"
+    );
+    fs::remove_dir_all(path.parent().unwrap()).ok();
+}
+
+#[test]
+fn cli_extract_dry_run_writes_nothing() {
+    let doc = sample_doc();
+    let path = temp_path("extract-dry");
+    fs::write(&path, fontspace_json::save(&doc)).unwrap();
+    let out = path.parent().unwrap().join("fragment.json");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_fontspace"))
+        .args([
+            "--dry-run",
+            "extract",
+            path.to_str().unwrap(),
+            "--glyph-set",
+            "gs",
+            "--page",
+            "Regular",
+            "--output",
+            out.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert!(!out.exists(), "--dry-run must not write the fragment file");
+    assert!(
+        String::from_utf8(output.stdout)
+            .unwrap()
+            .contains("dry-run")
+    );
+    fs::remove_dir_all(path.parent().unwrap()).ok();
+}
+
+#[test]
+fn cli_extract_rejects_a_non_unique_page() {
+    // `--page all` resolves to two pages; extract targets exactly one, so it fails
+    // without writing (CLAUDE.md "no hidden remapping").
+    let doc = sample_doc();
+    let path = temp_path("extract-ambiguous");
+    fs::write(&path, fontspace_json::save(&doc)).unwrap();
+    let out = path.parent().unwrap().join("fragment.json");
+
+    let status = Command::new(env!("CARGO_BIN_EXE_fontspace"))
+        .args([
+            "extract",
+            path.to_str().unwrap(),
+            "--glyph-set",
+            "gs",
+            "--page",
+            "all",
+            "--output",
+            out.to_str().unwrap(),
+        ])
+        .status()
+        .unwrap();
+    assert!(!status.success(), "an ambiguous --page must exit non-zero");
+    assert!(!out.exists(), "a rejected extract must not write");
     fs::remove_dir_all(path.parent().unwrap()).ok();
 }

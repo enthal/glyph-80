@@ -13,11 +13,11 @@ use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
 
-use fontspace_json::{JsonError, load as load_json, save as save_json};
-use fontspace_model::{FontSpace, IdGen, RandomIdGen, SequentialIdGen};
+use fontspace_json::{JsonError, load as load_json, save as save_json, write_fragment};
+use fontspace_model::{FontSpace, FontSpaceFragment, IdGen, RandomIdGen, SequentialIdGen};
 use fontspace_ops::{
-    ChangeSet, FontSpaceError, GlyphRef, PixelEdit, SetPixels, ShiftGlyphs, resolve_pages_in,
-    set_pixels, shift_glyphs,
+    ChangeSet, ExtractGlyphs, FontSpaceError, GlyphRef, GlyphSelector, PixelEdit, SetPixels,
+    ShiftGlyphs, extract_glyphs, resolve_pages_in, set_pixels, shift_glyphs,
 };
 use fontspace_render::{TextGridRequest, TextStringRequest, render_text_grid, render_text_string};
 
@@ -119,6 +119,20 @@ enum Command {
         #[arg(long, default_value_t = 1)]
         scale_y: usize,
     },
+    /// Extract glyphs from one page into a fragment JSON file (spec/08 §8.5).
+    Extract {
+        path: PathBuf,
+        #[arg(long)]
+        glyph_set: String,
+        #[arg(long)]
+        page: String,
+        /// A glyph code selector (e.g. `A-Z`, `0x20-0x7E`). Defaults to all glyphs.
+        #[arg(long)]
+        glyphs: Option<String>,
+        /// Destination fragment JSON file.
+        #[arg(long)]
+        output: PathBuf,
+    },
 }
 
 /// Everything a command can fail with; rendered to stderr by `main`.
@@ -134,7 +148,7 @@ enum CliError {
     Io(#[from] std::io::Error),
     #[error("{0} already exists (refusing to overwrite; delete it first)")]
     FileExists(String),
-    #[error("set-pixels needs exactly one target page, but --page matched {count}")]
+    #[error("--page must match exactly one page, but matched {count}")]
     PageTargetNotUnique { count: usize },
 }
 
@@ -306,6 +320,45 @@ fn run(cli: Cli) -> Result<(), CliError> {
                 )?,
             };
             println!("{output}");
+            Ok(())
+        }
+
+        Command::Extract {
+            path,
+            glyph_set,
+            page,
+            glyphs,
+            output,
+        } => {
+            let doc = load_document(&path)?;
+            let glyph_set_id = resolve_glyph_set(&doc, &glyph_set)?;
+            // Extract targets one page: the --page selector must resolve to exactly
+            // one page — never silently narrow a list (CLAUDE.md "no hidden remapping").
+            let resolved = resolve_pages_in(&doc, glyph_set_id, &parse_page_selector(&page))?;
+            let page_id = match resolved.as_slice() {
+                [only] => *only,
+                other => return Err(CliError::PageTargetNotUnique { count: other.len() }),
+            };
+            let glyphs = match glyphs {
+                Some(spec) => parse_glyph_selector(&spec)?,
+                None => GlyphSelector::All,
+            };
+            let fragment = extract_glyphs(
+                &doc,
+                &ExtractGlyphs {
+                    glyph_set_id,
+                    page_id,
+                    glyphs,
+                },
+            )?;
+            let count = fragment.glyphs.len();
+            let fragment = FontSpaceFragment::Glyphs(fragment);
+            if cli.dry_run {
+                println!("dry-run: {count} glyph(s) extracted — nothing written");
+            } else {
+                write_fragment(&output, &fragment)?;
+                println!("{count} glyph(s) written to {}", output.display());
+            }
             Ok(())
         }
     }
