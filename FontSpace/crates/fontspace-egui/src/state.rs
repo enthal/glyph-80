@@ -64,6 +64,9 @@ pub struct AppState {
     /// Editable sample text for the text-preview view (spec/12 §12.10). UI state,
     /// not document data — it is never written to the `.fontspace.json`.
     pub preview_text: String,
+    /// Whether the text preview draws 1px dividers between glyph cells (spec/12
+    /// §12.10). UI state, default off.
+    pub preview_dividers: bool,
     /// A document-replacing action awaiting unsaved-changes confirmation (spec/12
     /// §12.12), or `None` when no modal is open.
     pending_discard: Option<GuardedIntent>,
@@ -102,6 +105,7 @@ impl AppState {
             ids,
             grid: GridLevel::Subtle,
             preview_text: "AAA HAH".to_string(),
+            preview_dividers: false,
             pending_discard: None,
             status: None,
             active_stroke: None,

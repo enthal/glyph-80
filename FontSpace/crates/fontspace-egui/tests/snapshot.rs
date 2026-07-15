@@ -80,6 +80,19 @@ fn text_preview() {
 }
 
 #[test]
+fn text_preview_dividers() {
+    // The same preview with the 1px blue cell dividers enabled (default is off).
+    let mut state = state();
+    state.preview_dividers = true;
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(400.0, 220.0))
+        .wgpu()
+        .build_ui(move |ui| show_text_preview(ui, &mut state));
+    harness.run();
+    harness.snapshot_options("text_preview_dividers", &options());
+}
+
+#[test]
 fn page_overview() {
     let mut state = state();
     let mut harness = Harness::builder()

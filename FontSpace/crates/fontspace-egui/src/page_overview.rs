@@ -9,6 +9,7 @@
 use egui::{Align2, Color32, CornerRadius, FontId, Rect, Sense, Stroke, Vec2};
 use fontspace_model::{Bitmap, CharacterSet, GlyphPage, GlyphSize};
 
+use crate::charset_view::glyph_tooltip;
 use crate::glyph_paint::paint_bitmap;
 use crate::state::AppState;
 
@@ -95,7 +96,8 @@ pub fn show_page_overview(ui: &mut egui::Ui, state: &mut AppState) {
                     for entry in &entries {
                         let bitmap = page.glyph_of_code(entry.code).map(|g| &g.bitmap);
                         let response =
-                            thumbnail(ui, entry, bitmap, size, entry.code == selected_code);
+                            thumbnail(ui, entry, bitmap, size, entry.code == selected_code)
+                                .on_hover_text(glyph_tooltip(entry.code, character_set));
                         if response.clicked() {
                             clicked = Some(entry.code);
                         }
