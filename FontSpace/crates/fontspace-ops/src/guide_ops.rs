@@ -31,6 +31,15 @@ pub struct MoveGuide {
     pub position: i32,
 }
 
+/// Rename an existing guide. A no-op if the name is unchanged.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RenameGuide {
+    pub glyph_set_id: GlyphSetId,
+    pub page_id: PageId,
+    pub guide_id: GuideId,
+    pub name: String,
+}
+
 /// Remove a guide from a page. Invertible: undo re-inserts the same guide (spec/07
 /// §7.7).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -110,6 +119,33 @@ pub fn move_guide(doc: &mut FontSpace, req: &MoveGuide) -> Result<ChangeSet, Fon
         let before = guide.clone();
         let mut after = guide.clone();
         after.position = req.position;
+        ObjectChange::GuideChanged(GuideChange {
+            glyph_set_id: req.glyph_set_id,
+            page_id: req.page_id,
+            guide_id: req.guide_id,
+            index,
+            before: Some(before),
+            after: Some(after),
+        })
+    };
+    let change_set = ChangeSet {
+        object_changes: vec![change],
+        warnings: Vec::new(),
+    };
+    apply_change_set(doc, &change_set)?;
+    Ok(change_set)
+}
+
+/// Applies `RenameGuide`.
+pub fn rename_guide(doc: &mut FontSpace, req: &RenameGuide) -> Result<ChangeSet, FontSpaceError> {
+    let change = {
+        let (index, guide) = find_guide(doc, req.glyph_set_id, req.page_id, req.guide_id)?;
+        if guide.name == req.name {
+            return Ok(ChangeSet::default());
+        }
+        let before = guide.clone();
+        let mut after = guide.clone();
+        after.name = req.name.clone();
         ObjectChange::GuideChanged(GuideChange {
             glyph_set_id: req.glyph_set_id,
             page_id: req.page_id,

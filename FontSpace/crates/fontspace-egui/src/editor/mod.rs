@@ -137,13 +137,14 @@ pub fn show_glyph_editor(ui: &mut egui::Ui, state: &mut AppState) {
 }
 
 /// A collapsing "Guides" section for the selected page (spec/12 §12.6): add
-/// horizontal/vertical guides, show/hide, edit position, and remove. Guide edits go
-/// through `fontspace-ops` and are individually undoable. (Dragging guides on the
-/// matrix and rename/lock/copy-to-pages are follow-ups.)
+/// horizontal/vertical guides, show/hide, rename, edit position, and remove. Guide
+/// edits go through `fontspace-ops` and are individually undoable. (Dragging guides on
+/// the matrix and lock/copy-to-pages are follow-ups.)
 fn guides_section(ui: &mut egui::Ui, state: &mut AppState) {
     let mut add_axis: Option<GuideAxis> = None;
     let mut toggle: Option<(GuideId, bool)> = None;
     let mut moved: Option<(GuideId, i32)> = None;
+    let mut renamed: Option<(GuideId, String)> = None;
     let mut remove: Option<GuideId> = None;
 
     egui::CollapsingHeader::new("Guides")
@@ -183,7 +184,18 @@ fn guides_section(ui: &mut egui::Ui, state: &mut AppState) {
                     if ui.add(egui::DragValue::new(&mut position)).changed() {
                         moved = Some((guide.id, position));
                     }
-                    ui.label(&guide.name);
+                    // Editable name: commit on losing focus (Enter/Tab/click-away) so a
+                    // rename is one undo entry, not one per keystroke. The id is salted
+                    // with the guide id so the fields never share a widget id.
+                    let mut name = guide.name.clone();
+                    let response = ui.add(
+                        egui::TextEdit::singleline(&mut name)
+                            .desired_width(90.0)
+                            .id_salt(guide.id),
+                    );
+                    if response.lost_focus() && name != guide.name {
+                        renamed = Some((guide.id, name));
+                    }
                     if ui.small_button("Remove").clicked() {
                         remove = Some(guide.id);
                     }
@@ -198,6 +210,8 @@ fn guides_section(ui: &mut egui::Ui, state: &mut AppState) {
         state.set_guide_visible(id, visible);
     } else if let Some((id, position)) = moved {
         state.move_guide(id, position);
+    } else if let Some((id, name)) = renamed {
+        state.rename_guide(id, name);
     } else if let Some(id) = remove {
         state.remove_guide(id);
     }
