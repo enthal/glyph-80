@@ -14,14 +14,15 @@ use fontspace_json::{LoadOutcome, load_fragment, save_fragment};
 use fontspace_model::{
     Bitmap, CharacterEntry, CharacterSet, CharacterSetId, FontSpace, FontSpaceFragment,
     FragmentGlyph, Glyph, GlyphFragment, GlyphPage, GlyphSet, GlyphSetId, GlyphSize, Guide,
-    GuideAxis, GuideId, IdGen, PageId, RandomIdGen,
+    GuideAxis, GuideId, IdGen, OverflowPolicy, PageId, RandomIdGen,
 };
 
 use fontspace_ops::{
-    AddGuide, ChangeSet, FontSpaceWarning, GlyphMapping, GlyphRef, GlyphSizeConversion, MoveGuide,
-    PasteGlyphs, RemoveCharacterEntry, RemoveGuide, RenameGuide, SetGuideVisible, SetPixels,
-    add_guide, apply_change_set, move_guide, paste_glyphs, remove_character_entry, remove_guide,
-    rename_guide, set_guide_visible, set_pixels, undo,
+    AddGuide, ChangeSet, FontSpaceWarning, GlyphMapping, GlyphRef, GlyphSelector,
+    GlyphSizeConversion, MoveGuide, PageSelector, PasteGlyphs, RemoveCharacterEntry, RemoveGuide,
+    RenameGuide, SetGuideVisible, SetPixels, ShiftGlyphs, add_guide, apply_change_set, move_guide,
+    paste_glyphs, remove_character_entry, remove_guide, rename_guide, set_guide_visible,
+    set_pixels, shift_glyphs, undo,
 };
 
 use crate::editor::geometry::GridLevel;
@@ -102,6 +103,10 @@ pub struct AppState {
     /// The copied pixel region (spec/12 §12.4), a patch stamped by paste. Survives
     /// navigation (it is a clipboard), unlike the marquee. UI state, never persisted.
     region_clipboard: Option<Bitmap>,
+    /// Whether the glyph-shift control wraps pixels around the opposite edge
+    /// (`OverflowPolicy::Wrap`) rather than discarding them (spec/12 §12.3). UI state;
+    /// default off, matching the CLI `shift` default. Wrap rotates rows/columns.
+    pub shift_wrap: bool,
 }
 
 impl Default for AppState {
@@ -134,6 +139,7 @@ impl AppState {
             pixel_selection: None,
             selection_anchor: None,
             region_clipboard: None,
+            shift_wrap: false,
         }
     }
 
@@ -392,6 +398,30 @@ impl AppState {
             edits: stamp_edits(&patch, (rect.x0, rect.y0), size),
         };
         if let Ok(change_set) = set_pixels(&mut self.active.content, &request) {
+            self.record(change_set);
+        }
+    }
+
+    /// Shifts the whole current glyph by `(dx, dy)` as one undo entry (spec/12 §12.3),
+    /// reusing the `ShiftGlyphs` domain op that backs the CLI `shift`. The overflow
+    /// policy follows [`shift_wrap`](Self::shift_wrap): wrap rotates rows/columns around
+    /// the opposite edge, discard drops what falls off. A no-op when the current glyph is
+    /// absent or the shift changes nothing (a blank glyph, or `(0, 0)`).
+    pub fn shift_glyph(&mut self, dx: i16, dy: i16) {
+        let overflow = if self.shift_wrap {
+            OverflowPolicy::Wrap
+        } else {
+            OverflowPolicy::Discard
+        };
+        let request = ShiftGlyphs {
+            glyph_set_id: self.active.selection.glyph_set_id,
+            pages: PageSelector::Id(self.active.selection.page_id),
+            glyphs: GlyphSelector::Code(self.active.selection.code),
+            dx,
+            dy,
+            overflow,
+        };
+        if let Ok(change_set) = shift_glyphs(&mut self.active.content, &request) {
             self.record(change_set);
         }
     }
@@ -1192,6 +1222,42 @@ mod tests {
         state.undo(); // one undoable entry restores the region
         assert!(state.selected_pixel(0, 0));
         assert!(state.selected_pixel(1, 1));
+    }
+
+    #[test]
+    fn shift_glyph_moves_the_current_glyph_and_is_one_undo_entry() {
+        let mut state = editable_state();
+        // Paint (0,0) on the otherwise 'A'-shaped starter glyph (column 0 is unused).
+        state.begin_stroke((0, 0));
+        state.commit_stroke();
+        assert!(state.selected_pixel(0, 0));
+
+        // Discard shift right by one: (0,0) → (1,0), and column 0 vacates.
+        assert!(!state.shift_wrap);
+        state.shift_glyph(1, 0);
+        assert!(state.selected_pixel(1, 0));
+        assert!(!state.selected_pixel(0, 0));
+        assert!(state.can_undo());
+
+        // One undo entry restores the pre-shift glyph.
+        state.undo();
+        assert!(state.selected_pixel(0, 0));
+        assert!(!state.selected_pixel(1, 0));
+    }
+
+    #[test]
+    fn shift_glyph_wrap_rotates_pixels_around_the_edge() {
+        let mut state = editable_state();
+        state.begin_stroke((0, 0));
+        state.commit_stroke();
+        assert!(state.selected_pixel(0, 0));
+
+        // With wrap on, shifting left by one carries column 0 around to the last column.
+        state.shift_wrap = true;
+        state.shift_glyph(-1, 0);
+        let width = state.selected_context().unwrap().0.glyph_size.width;
+        assert!(state.selected_pixel(width - 1, 0));
+        assert!(!state.selected_pixel(0, 0));
     }
 
     #[test]
