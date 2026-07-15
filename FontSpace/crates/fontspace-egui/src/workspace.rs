@@ -79,13 +79,13 @@ mod tests {
     }
 
     #[test]
-    fn document_ids_are_distinct_and_from_the_generator() {
+    fn document_ids_come_from_the_injected_generator() {
         // Runtime ids come from the injected generator (never ambient — spec/03), so
-        // two mints differ and are reproducible under a sequential generator.
+        // under a sequential generator they are exactly the reproducible 1, 2, … —
+        // pinning the values proves the source, not merely that they differ.
         let mut ids = SequentialIdGen::new();
-        let a = DocumentId::new(&mut ids);
-        let b = DocumentId::new(&mut ids);
-        assert_ne!(a, b);
+        assert_eq!(DocumentId::new(&mut ids).0, Uuid::from_u128(1));
+        assert_eq!(DocumentId::new(&mut ids).0, Uuid::from_u128(2));
     }
 
     #[test]
