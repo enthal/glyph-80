@@ -3,7 +3,7 @@
 //! must not live inside a UI function).
 
 use fontspace_model::{FontSpace, GlyphSetId, OverflowPolicy};
-use fontspace_ops::{GlyphSelector, PageSelector};
+use fontspace_ops::{GlyphMapping, GlyphSelector, PageSelector};
 use fontspace_render::RenderLayout;
 
 /// Why a command-line value could not be parsed or resolved.
@@ -23,6 +23,8 @@ pub enum ParseError {
     AmbiguousGlyphSet { name: String, count: usize },
     #[error("choose only one render subject: --glyphs, --text, or --text-nl")]
     RenderSubjectConflict,
+    #[error("invalid mapping {0:?} (expected 'by-code' or 'sequential-from-code:CODE')")]
+    Mapping(String),
 }
 
 /// A single pixel assignment parsed from `X,Y,VALUE`.
@@ -74,6 +76,20 @@ pub fn parse_glyph_selector(spec: &str) -> Result<GlyphSelector, ParseError> {
         });
     }
     Ok(GlyphSelector::Code(parse_code_token(spec)?))
+}
+
+/// Parses a paste glyph mapping (spec/08 §8.3): `by-code` (the default), or
+/// `sequential-from-code:CODE` where CODE is a character/decimal/`0x`-hex code.
+/// `BySlot` arrives with the ordinal-paste slice.
+pub fn parse_glyph_mapping(spec: &str) -> Result<GlyphMapping, ParseError> {
+    let spec = spec.trim();
+    if spec.eq_ignore_ascii_case("by-code") {
+        return Ok(GlyphMapping::ByCode);
+    }
+    if let Some(code) = spec.strip_prefix("sequential-from-code:") {
+        return Ok(GlyphMapping::SequentialFromCode(parse_code_token(code)?));
+    }
+    Err(ParseError::Mapping(spec.to_string()))
 }
 
 /// Parses a page selector: `all`, or a comma list of page names (spec/13.1).
@@ -354,6 +370,39 @@ mod tests {
         assert_eq!(
             resolve_render_subject(None, Some("Hi"), Some("Yo")),
             Err(ParseError::RenderSubjectConflict)
+        );
+    }
+
+    #[test]
+    fn glyph_mapping_parses_by_code_and_sequential() {
+        assert_eq!(
+            parse_glyph_mapping("by-code").unwrap(),
+            GlyphMapping::ByCode
+        );
+        assert_eq!(
+            parse_glyph_mapping("  By-Code ").unwrap(),
+            GlyphMapping::ByCode
+        );
+        assert_eq!(
+            parse_glyph_mapping("sequential-from-code:0x50").unwrap(),
+            GlyphMapping::SequentialFromCode(0x50)
+        );
+        // The code after the colon accepts a character, too.
+        assert_eq!(
+            parse_glyph_mapping("sequential-from-code:A").unwrap(),
+            GlyphMapping::SequentialFromCode(0x41)
+        );
+    }
+
+    #[test]
+    fn glyph_mapping_rejects_unknown_and_bad_code() {
+        assert_eq!(
+            parse_glyph_mapping("by-slot"),
+            Err(ParseError::Mapping("by-slot".into()))
+        );
+        assert_eq!(
+            parse_glyph_mapping("sequential-from-code:0xZZ"),
+            Err(ParseError::Code("0xZZ".into()))
         );
     }
 }

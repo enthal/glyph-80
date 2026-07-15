@@ -19,11 +19,18 @@ fontspace render-text file.fontspace.json \
 fontspace extract file.fontspace.json \
   --glyph-set "Terminal 8x16" --page Regular \
   --glyphs A-Z --output fragment.json
+
+fontspace paste file.fontspace.json \
+  --fragment fragment.json \
+  --glyph-set "Terminal 8x16" --page Bold \
+  --mapping by-code
 ```
 
 Glyph ranges accept characters (`A-Z`), decimal, or `0x` hex codes, resolved via the referenced character set.
 
-**`extract`** copies the selected glyphs off **one** page (`--page` must resolve to exactly one page — an ambiguous or multi-page selector is an error, never silently narrowed) into a canonical glyph fragment (§8.5). `--glyphs` defaults to all glyphs. Because a glyph fragment is a flat, page-agnostic list of codes, copying whole pages or several pages at once is the job of a `Pages` fragment, which arrives with that slice; the complementary `paste` command and the resizing/`by-slot` paste policies likewise land as their own slices.
+**`extract`** copies the selected glyphs off **one** page (`--page` must resolve to exactly one page — an ambiguous or multi-page selector is an error, never silently narrowed) into a canonical glyph fragment (§8.5). `--glyphs` defaults to all glyphs. Because a glyph fragment is a flat, page-agnostic list of codes, copying whole pages or several pages at once is the job of a `Pages` fragment, which arrives with that slice.
+
+**`paste`** places a glyph fragment onto one page (again `--page` must resolve to exactly one), returning one invertible change. `--mapping` chooses the destination code — `by-code` (the default) or `sequential-from-code:CODE` (§8.3) — and geometry must match exactly (`RequireExact`): a size difference is an error, never a silent resize. Like every mutating command it honors `--dry-run` and writes atomically. `BySlot` and the resizing conversions land with the size-conversion slice.
 
 **`render-text` subjects.** The subject is exactly one of three mutually-exclusive forms; supplying more than one is an error:
 

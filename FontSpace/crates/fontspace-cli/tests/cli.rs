@@ -11,7 +11,8 @@ use fontspace_model::{
     GlyphSize, SequentialIdGen,
 };
 use fontspace_ops::{
-    ExtractGlyphs, GlyphSelector, PageSelector, ShiftGlyphs, extract_glyphs, shift_glyphs,
+    ExtractGlyphs, GlyphMapping, GlyphSelector, GlyphSizeConversion, PageSelector, PasteGlyphs,
+    ShiftGlyphs, extract_glyphs, paste_glyphs, shift_glyphs,
 };
 use fontspace_render::{
     RenderLayout, TextGridRequest, TextStringRequest, render_text_grid, render_text_string,
@@ -465,5 +466,196 @@ fn cli_extract_rejects_a_non_unique_page() {
         .unwrap();
     assert!(!status.success(), "an ambiguous --page must exit non-zero");
     assert!(!out.exists(), "a rejected extract must not write");
+    fs::remove_dir_all(path.parent().unwrap()).ok();
+}
+
+/// Builds a fragment (all glyphs from Regular) and a destination doc whose Regular
+/// page is empty but shares the source geometry/charset — the setup for paste tests.
+fn paste_fixture() -> (fontspace_model::GlyphFragment, FontSpace) {
+    let src = sample_doc();
+    let glyph_set_id = src.glyph_sets[0].id;
+    let page_id = src.glyph_sets[0].pages[0].id;
+    let fragment = extract_glyphs(
+        &src,
+        &ExtractGlyphs {
+            glyph_set_id,
+            page_id,
+            glyphs: GlyphSelector::All,
+        },
+    )
+    .unwrap();
+    let mut dest = sample_doc();
+    dest.glyph_sets[0].pages[0].glyphs.clear(); // empty Regular page
+    (fragment, dest)
+}
+
+#[test]
+fn cli_paste_matches_library_paste() {
+    let (fragment, dest) = paste_fixture();
+    let glyph_set_id = dest.glyph_sets[0].id;
+    let page_id = dest.glyph_sets[0].pages[0].id;
+
+    // Library: paste by code into the empty destination and save canonically.
+    let mut via_library = dest.clone();
+    paste_glyphs(
+        &mut via_library,
+        &PasteGlyphs {
+            fragment: fragment.clone(),
+            target_glyph_set_id: glyph_set_id,
+            target_page_id: page_id,
+            mapping: GlyphMapping::ByCode,
+            size_conversion: GlyphSizeConversion::RequireExact,
+        },
+    )
+    .unwrap();
+    let expected = fontspace_json::save(&via_library);
+
+    // CLI: write the destination + fragment file, run paste through the binary.
+    let path = temp_path("paste");
+    fs::write(&path, fontspace_json::save(&dest)).unwrap();
+    let frag_path = path.parent().unwrap().join("fragment.json");
+    fs::write(
+        &frag_path,
+        fontspace_json::save_fragment(&FontSpaceFragment::Glyphs(fragment)),
+    )
+    .unwrap();
+    let status = Command::new(env!("CARGO_BIN_EXE_fontspace"))
+        .args([
+            "paste",
+            path.to_str().unwrap(),
+            "--fragment",
+            frag_path.to_str().unwrap(),
+            "--glyph-set",
+            "gs",
+            "--page",
+            "Regular",
+        ])
+        .status()
+        .unwrap();
+    assert!(status.success());
+    assert_eq!(
+        fs::read_to_string(&path).unwrap(),
+        expected,
+        "CLI paste must match library paste byte-for-byte"
+    );
+    fs::remove_dir_all(path.parent().unwrap()).ok();
+}
+
+#[test]
+fn cli_paste_sequential_mapping_matches_library() {
+    let (fragment, dest) = paste_fixture();
+    let glyph_set_id = dest.glyph_sets[0].id;
+    let page_id = dest.glyph_sets[0].pages[0].id;
+
+    // The only fragment glyph is 0x41; sequential-from-code:0x42 remaps it to 0x42.
+    let mut via_library = dest.clone();
+    paste_glyphs(
+        &mut via_library,
+        &PasteGlyphs {
+            fragment: fragment.clone(),
+            target_glyph_set_id: glyph_set_id,
+            target_page_id: page_id,
+            mapping: GlyphMapping::SequentialFromCode(0x42),
+            size_conversion: GlyphSizeConversion::RequireExact,
+        },
+    )
+    .unwrap();
+    let expected = fontspace_json::save(&via_library);
+
+    let path = temp_path("paste-seq");
+    fs::write(&path, fontspace_json::save(&dest)).unwrap();
+    let frag_path = path.parent().unwrap().join("fragment.json");
+    fs::write(
+        &frag_path,
+        fontspace_json::save_fragment(&FontSpaceFragment::Glyphs(fragment)),
+    )
+    .unwrap();
+    let status = Command::new(env!("CARGO_BIN_EXE_fontspace"))
+        .args([
+            "paste",
+            path.to_str().unwrap(),
+            "--fragment",
+            frag_path.to_str().unwrap(),
+            "--glyph-set",
+            "gs",
+            "--page",
+            "Regular",
+            "--mapping",
+            "sequential-from-code:0x42",
+        ])
+        .status()
+        .unwrap();
+    assert!(status.success());
+    assert_eq!(fs::read_to_string(&path).unwrap(), expected);
+    fs::remove_dir_all(path.parent().unwrap()).ok();
+}
+
+#[test]
+fn cli_paste_dry_run_writes_nothing() {
+    let (fragment, dest) = paste_fixture();
+    let path = temp_path("paste-dry");
+    let original = fontspace_json::save(&dest);
+    fs::write(&path, &original).unwrap();
+    let frag_path = path.parent().unwrap().join("fragment.json");
+    fs::write(
+        &frag_path,
+        fontspace_json::save_fragment(&FontSpaceFragment::Glyphs(fragment)),
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_fontspace"))
+        .args([
+            "--dry-run",
+            "paste",
+            path.to_str().unwrap(),
+            "--fragment",
+            frag_path.to_str().unwrap(),
+            "--glyph-set",
+            "gs",
+            "--page",
+            "Regular",
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(
+        fs::read_to_string(&path).unwrap(),
+        original,
+        "--dry-run must not modify the document"
+    );
+    assert!(
+        String::from_utf8(output.stdout)
+            .unwrap()
+            .contains("dry-run")
+    );
+    fs::remove_dir_all(path.parent().unwrap()).ok();
+}
+
+#[test]
+fn cli_paste_missing_fragment_names_the_path() {
+    let doc = sample_doc();
+    let path = temp_path("paste-missing");
+    fs::write(&path, fontspace_json::save(&doc)).unwrap();
+    let missing = path.parent().unwrap().join("nope.fragment.json");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_fontspace"))
+        .args([
+            "paste",
+            path.to_str().unwrap(),
+            "--fragment",
+            missing.to_str().unwrap(),
+            "--glyph-set",
+            "gs",
+            "--page",
+            "Regular",
+        ])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        stderr.contains("nope.fragment.json"),
+        "the error must name the missing file: {stderr}"
+    );
     fs::remove_dir_all(path.parent().unwrap()).ok();
 }
