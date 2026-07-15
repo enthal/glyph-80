@@ -25,7 +25,9 @@ use fontspace_ops::{
 };
 
 use crate::editor::geometry::GridLevel;
-use crate::editor::region::{FlipDir, PixelRect, flip_edits, region_extract, stamp_edits};
+use crate::editor::region::{
+    FlipDir, PixelRect, flip_edits, region_extract, rotate_edits, stamp_edits,
+};
 use crate::editor::stroke::Stroke;
 use crate::workspace::{DocumentId, OpenDocument};
 
@@ -305,6 +307,43 @@ impl AppState {
         };
         if let Ok(change_set) = set_pixels(&mut self.active.content, &request) {
             self.record(change_set);
+        }
+    }
+
+    /// Rotates the selected region 90° clockwise in place as one undo entry (spec/12
+    /// §12.4). A square region rotates within its bounds; a non-square one rotates into
+    /// its transposed footprint (anchored at the top-left, clipped at the glyph edge),
+    /// and the marquee follows it there. A no-op when there is no selection.
+    pub fn rotate_selection(&mut self) {
+        let Some(rect) = self.pixel_selection else {
+            return;
+        };
+        let Some((glyph_set, _)) = self.selected_context() else {
+            return;
+        };
+        let size = glyph_set.glyph_size;
+        let bitmap = self
+            .selected_bitmap()
+            .cloned()
+            .unwrap_or_else(|| Bitmap::new_blank(size));
+        let request = SetPixels {
+            target: GlyphRef {
+                glyph_set_id: self.active.selection.glyph_set_id,
+                page_id: self.active.selection.page_id,
+                code: self.active.selection.code,
+            },
+            edits: rotate_edits(&bitmap, rect, size),
+        };
+        if let Ok(change_set) = set_pixels(&mut self.active.content, &request) {
+            self.record(change_set);
+            // The marquee follows the content into the transposed footprint (dims
+            // swapped), clamped to the glyph so it never leaves the matrix.
+            self.pixel_selection = Some(PixelRect {
+                x0: rect.x0,
+                y0: rect.y0,
+                x1: (rect.x0 + rect.height() - 1).min(size.width.saturating_sub(1)),
+                y1: (rect.y0 + rect.width() - 1).min(size.height.saturating_sub(1)),
+            });
         }
     }
 
@@ -1126,6 +1165,33 @@ mod tests {
         state.select_code(0x42);
         assert!(state.pixel_selection().is_none());
         assert!(state.has_region_clipboard());
+    }
+
+    #[test]
+    fn rotate_selection_turns_the_region_and_is_one_undo_entry() {
+        let mut state = editable_state();
+        state.begin_stroke((0, 0)); // paint (0,0); the starter 'A' already has (1,1) on
+        state.commit_stroke();
+        assert!(state.selected_pixel(0, 0));
+        assert!(state.selected_pixel(1, 1));
+        assert!(!state.selected_pixel(1, 0));
+        assert!(!state.selected_pixel(0, 1));
+
+        // Rotate the 2×2 region [0..1]×[0..1] clockwise: (0,0)&(1,1) → (1,0)&(0,1).
+        state.begin_selection((0, 0));
+        state.extend_selection((1, 1));
+        state.end_selection();
+        state.rotate_selection();
+
+        assert!(state.selected_pixel(1, 0));
+        assert!(state.selected_pixel(0, 1));
+        assert!(!state.selected_pixel(0, 0));
+        assert!(!state.selected_pixel(1, 1));
+        assert!(state.can_undo());
+
+        state.undo(); // one undoable entry restores the region
+        assert!(state.selected_pixel(0, 0));
+        assert!(state.selected_pixel(1, 1));
     }
 
     #[test]

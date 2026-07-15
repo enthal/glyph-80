@@ -107,6 +107,37 @@ pub fn stamp_edits(patch: &Bitmap, origin: (u16, u16), glyph: GlyphSize) -> Vec<
     edits
 }
 
+/// A copy of `patch` rotated 90° **clockwise**; the result dimensions are swapped
+/// (a `w`×`h` patch becomes `h`×`w`). Source `(sx, sy)` lands at `(h-1-sy, sx)`.
+pub fn rotate_cw(patch: &Bitmap) -> Bitmap {
+    let (w, h) = (patch.width(), patch.height());
+    let mut out = Bitmap::new_blank(GlyphSize::new(h, w));
+    for sy in 0..h {
+        for sx in 0..w {
+            if patch.get(sx, sy).unwrap_or(false) {
+                let _ = out.set(h - 1 - sy, sx, true);
+            }
+        }
+    }
+    out
+}
+
+/// The `SetPixels` edits that rotate `rect` of `bitmap` 90° clockwise, anchored at the
+/// rect's top-left (spec/12 §12.4): the region is cleared and the rotated patch (dims
+/// swapped) is stamped at `(x0, y0)`, clipped at the glyph edge. A square selection
+/// rotates in place; a non-square one rotates into its transposed footprint (so some
+/// original cells outside that footprint are cleared).
+pub fn rotate_edits(bitmap: &Bitmap, rect: PixelRect, glyph: GlyphSize) -> Vec<PixelEdit> {
+    let rotated = rotate_cw(&region_extract(bitmap, rect));
+    // Clear the whole original region first; the stamp (appended after) wins on any
+    // overlapping cell, since edits apply in order.
+    let mut edits: Vec<PixelEdit> = (rect.y0..=rect.y1)
+        .flat_map(|y| (rect.x0..=rect.x1).map(move |x| PixelEdit { x, y, value: false }))
+        .collect();
+    edits.extend(stamp_edits(&rotated, (rect.x0, rect.y0), glyph));
+    edits
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -196,6 +227,37 @@ mod tests {
         assert!(out.get(2, 2).unwrap()); // patch (0,0) on
         assert!(!out.get(3, 3).unwrap()); // patch (1,1) off replaced the on pixel
         assert_eq!(out.count_on(), 1);
+    }
+
+    #[test]
+    fn rotate_cw_turns_a_quarter_clockwise_and_swaps_dims() {
+        // 2×3 patch (w=2, h=3) with a pixel at (0,0). CW → 3×2, pixel at (h-1, 0)=(2,0).
+        let mut patch = Bitmap::new_blank(GlyphSize::new(2, 3));
+        patch.set(0, 0, true).unwrap();
+        let r = rotate_cw(&patch);
+        assert_eq!(r.size(), GlyphSize::new(3, 2));
+        assert!(r.get(2, 0).unwrap());
+        assert_eq!(r.count_on(), 1);
+    }
+
+    #[test]
+    fn rotate_cw_four_times_is_the_identity() {
+        let src = bitmap_with(4, &[(0, 1), (2, 3), (1, 0)]);
+        let r = rotate_cw(&rotate_cw(&rotate_cw(&rotate_cw(&src))));
+        assert_eq!(r, src);
+    }
+
+    #[test]
+    fn rotate_edits_rotates_a_square_region_in_place() {
+        // A 2×2 region [0..1]×[0..1] holding a horizontal top bar (0,0),(1,0). Rotating
+        // clockwise turns it into a vertical bar on the right column (1,0),(1,1).
+        let src = bitmap_with(8, &[(0, 0), (1, 0)]);
+        let rect = PixelRect::from_corners((0, 0), (1, 1));
+        let out = apply(&src, &rotate_edits(&src, rect, GlyphSize::new(8, 8)));
+        assert!(out.get(1, 0).unwrap());
+        assert!(out.get(1, 1).unwrap());
+        assert!(!out.get(0, 0).unwrap());
+        assert_eq!(out.count_on(), 2);
     }
 
     #[test]

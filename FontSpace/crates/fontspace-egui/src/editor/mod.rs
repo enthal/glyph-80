@@ -268,6 +268,9 @@ fn region_toolbar(ui: &mut egui::Ui, state: &mut AppState) {
         if ui.button("Flip V").clicked() {
             state.flip_selection(FlipDir::TopBottom);
         }
+        if ui.button("Rotate").clicked() {
+            state.rotate_selection();
+        }
         if ui.button("Copy").clicked() {
             state.copy_selection();
         }
