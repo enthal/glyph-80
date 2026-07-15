@@ -17,16 +17,24 @@ use fontspace_model::{
 use crate::apply_change_set;
 use crate::change_set::{ChangeSet, GlyphChange, ObjectChange};
 use crate::error::FontSpaceError;
-use crate::selector::{GlyphSelector, resolve_glyph_codes};
+use crate::selector::{GlyphSelector, code_at_ordinal, resolve_glyph_codes};
 
-/// How a pasted glyph's destination `code` is chosen (spec/08 §8.3). `BySlot`
-/// (destination ordinal == source ordinal) lands with the ordinal-paste slice.
+/// How a pasted glyph's destination `code` is chosen (spec/08 §8.3).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GlyphMapping {
     /// Destination code equals the source glyph's `code` — the identity paste.
     ByCode,
     /// Destination codes count up from `start`, one per fragment glyph in order.
     SequentialFromCode(u32),
+    /// The i-th fragment glyph goes to the destination character set's entry at
+    /// **ordinal** `i` — position in the copied sequence, not `code`. A fragment is
+    /// emitted in source entry order, so `BySlot` reproduces that ordering into the
+    /// destination's slots regardless of the two sets' codes. **Caveat:** a fragment
+    /// holds only *drawn* glyphs (`extract` prunes blank codes), so a blank in the
+    /// source shifts every following glyph one slot earlier — `BySlot` preserves the
+    /// original slot numbers only when the copied range has no gaps. A fragment longer
+    /// than the destination set is an error, never truncated.
+    BySlot,
 }
 
 /// How a size difference between the fragment and the destination geometry is
@@ -72,8 +80,8 @@ pub struct PasteGlyphs {
 /// Copies the selected glyphs off `req.page_id` into a [`GlyphFragment`]. A pure
 /// query: the document is not modified. Only codes with a **stored** glyph are
 /// carried — an absent code is blank and holds nothing (spec/03 §3.6) — and each
-/// glyph records its entry `label` so a later by-slot paste is possible (spec/08
-/// §8.1). The fragment's `source_glyph_size` is the glyph set's geometry.
+/// glyph records its entry `label` as human-readable metadata for the paste UI
+/// (spec/08 §8.1). The fragment's `source_glyph_size` is the glyph set's geometry.
 pub fn extract_glyphs(
     doc: &FontSpace,
     req: &ExtractGlyphs,
@@ -186,6 +194,11 @@ pub fn paste_glyphs(doc: &mut FontSpace, req: &PasteGlyphs) -> Result<ChangeSet,
                         });
                     }
                     code as u32
+                }
+                GlyphMapping::BySlot => {
+                    // The i-th glyph fills the destination entry at ordinal i; a
+                    // fragment longer than the set is rejected, never truncated.
+                    code_at_ordinal(character_set, index)?
                 }
             };
             // Pasting via an operation never creates a dangling glyph: the target
@@ -720,6 +733,129 @@ mod tests {
         .unwrap();
         assert!(stored_pixel(&dst, 0x50, 0, 0)); // first fragment glyph
         assert!(stored_pixel(&dst, 0x51, 1, 1)); // second fragment glyph
+    }
+
+    #[test]
+    fn paste_by_slot_maps_by_destination_ordinal() {
+        // Source codes 0x41, 0x42; destination has *different* codes 0x61, 0x62. BySlot
+        // lands glyph 0 on ordinal 0 (0x61) and glyph 1 on ordinal 1 (0x62), ignoring
+        // the codes entirely.
+        let size = GlyphSize::new(8, 8);
+        let mut src = fixture(size, &[0x41, 0x42]);
+        draw(&mut src, 0x41, 0, 0);
+        draw(&mut src, 0x42, 1, 1);
+        let fragment = extract_glyphs(
+            &src.doc,
+            &ExtractGlyphs {
+                glyph_set_id: src.glyph_set_id,
+                page_id: src.page_id,
+                glyphs: GlyphSelector::All,
+            },
+        )
+        .unwrap();
+
+        let mut dst = fixture(size, &[0x61, 0x62]);
+        paste_glyphs(
+            &mut dst.doc,
+            &PasteGlyphs {
+                fragment,
+                target_glyph_set_id: dst.glyph_set_id,
+                target_page_id: dst.page_id,
+                mapping: GlyphMapping::BySlot,
+                size_conversion: GlyphSizeConversion::RequireExact,
+            },
+        )
+        .unwrap();
+        assert!(stored_pixel(&dst, 0x61, 0, 0)); // slot 0
+        assert!(stored_pixel(&dst, 0x62, 1, 1)); // slot 1
+    }
+
+    #[test]
+    fn paste_by_slot_rejects_a_fragment_longer_than_the_destination_set() {
+        // Two-glyph fragment, but the destination set has a single entry (one slot).
+        let size = GlyphSize::new(8, 8);
+        let mut src = fixture(size, &[0x41, 0x42]);
+        draw(&mut src, 0x41, 0, 0);
+        draw(&mut src, 0x42, 1, 1);
+        let fragment = extract_glyphs(
+            &src.doc,
+            &ExtractGlyphs {
+                glyph_set_id: src.glyph_set_id,
+                page_id: src.page_id,
+                glyphs: GlyphSelector::All,
+            },
+        )
+        .unwrap();
+
+        let mut dst = fixture(size, &[0x61]); // only slot 0 exists
+        let err = paste_glyphs(
+            &mut dst.doc,
+            &PasteGlyphs {
+                fragment,
+                target_glyph_set_id: dst.glyph_set_id,
+                target_page_id: dst.page_id,
+                mapping: GlyphMapping::BySlot,
+                size_conversion: GlyphSizeConversion::RequireExact,
+            },
+        )
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            FontSpaceError::OrdinalOutOfRange {
+                ordinal: 1,
+                len: 1,
+                ..
+            }
+        ));
+        // Atomic: the valid slot-0 glyph was not written either.
+        assert!(!stored_pixel(&dst, 0x61, 0, 0));
+    }
+
+    #[test]
+    fn paste_by_slot_shifts_when_the_source_has_blank_slots() {
+        // Source ordinals 0,1,2 = 0x41,0x42,0x43, but 0x41 is undrawn so `extract`
+        // prunes it: the fragment is [0x42, 0x43]. BySlot therefore lands 0x42 (source
+        // ordinal 1) on destination *ordinal 0*, not ordinal 1 — a gap shifts every
+        // following glyph one slot earlier. This documents the by-position behavior.
+        let size = GlyphSize::new(8, 8);
+        let mut src = fixture(size, &[0x41, 0x42, 0x43]);
+        draw(&mut src, 0x42, 1, 1); // ordinal 1, drawn
+        draw(&mut src, 0x43, 2, 2); // ordinal 2, drawn — 0x41 (ordinal 0) left blank
+        let fragment = extract_glyphs(
+            &src.doc,
+            &ExtractGlyphs {
+                glyph_set_id: src.glyph_set_id,
+                page_id: src.page_id,
+                glyphs: GlyphSelector::All,
+            },
+        )
+        .unwrap();
+        assert_eq!(fragment.glyphs.len(), 2); // 0x41 pruned
+
+        let mut dst = fixture(size, &[0x61, 0x62, 0x63]);
+        paste_glyphs(
+            &mut dst.doc,
+            &PasteGlyphs {
+                fragment,
+                target_glyph_set_id: dst.glyph_set_id,
+                target_page_id: dst.page_id,
+                mapping: GlyphMapping::BySlot,
+                size_conversion: GlyphSizeConversion::RequireExact,
+            },
+        )
+        .unwrap();
+        assert!(stored_pixel(&dst, 0x61, 1, 1)); // 0x42 → slot 0 (shifted up)
+        assert!(stored_pixel(&dst, 0x62, 2, 2)); // 0x43 → slot 1
+        // Slot 2 (0x63) received nothing.
+        assert!(
+            dst.doc
+                .glyph_set(dst.glyph_set_id)
+                .unwrap()
+                .page_of_id(dst.page_id)
+                .unwrap()
+                .glyph_of_code(0x63)
+                .is_none()
+        );
     }
 
     #[test]

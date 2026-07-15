@@ -23,7 +23,9 @@ pub enum ParseError {
     AmbiguousGlyphSet { name: String, count: usize },
     #[error("choose only one render subject: --glyphs, --text, or --text-nl")]
     RenderSubjectConflict,
-    #[error("invalid mapping {0:?} (expected 'by-code' or 'sequential-from-code:CODE')")]
+    #[error(
+        "invalid mapping {0:?} (expected 'by-code', 'by-slot', or 'sequential-from-code:CODE')"
+    )]
     Mapping(String),
     #[error(
         "invalid size conversion {0:?} (expected 'require-exact', 'center', or 'place-at:X,Y')"
@@ -82,13 +84,15 @@ pub fn parse_glyph_selector(spec: &str) -> Result<GlyphSelector, ParseError> {
     Ok(GlyphSelector::Code(parse_code_token(spec)?))
 }
 
-/// Parses a paste glyph mapping (spec/08 §8.3): `by-code` (the default), or
-/// `sequential-from-code:CODE` where CODE is a character/decimal/`0x`-hex code.
-/// `BySlot` arrives with the ordinal-paste slice.
+/// Parses a paste glyph mapping (spec/08 §8.3): `by-code` (the default), `by-slot`,
+/// or `sequential-from-code:CODE` where CODE is a character/decimal/`0x`-hex code.
 pub fn parse_glyph_mapping(spec: &str) -> Result<GlyphMapping, ParseError> {
     let spec = spec.trim();
     if spec.eq_ignore_ascii_case("by-code") {
         return Ok(GlyphMapping::ByCode);
+    }
+    if spec.eq_ignore_ascii_case("by-slot") {
+        return Ok(GlyphMapping::BySlot);
     }
     if let Some(code) = spec.strip_prefix("sequential-from-code:") {
         return Ok(GlyphMapping::SequentialFromCode(parse_code_token(code)?));
@@ -413,6 +417,10 @@ mod tests {
             GlyphMapping::ByCode
         );
         assert_eq!(
+            parse_glyph_mapping("by-slot").unwrap(),
+            GlyphMapping::BySlot
+        );
+        assert_eq!(
             parse_glyph_mapping("sequential-from-code:0x50").unwrap(),
             GlyphMapping::SequentialFromCode(0x50)
         );
@@ -426,8 +434,8 @@ mod tests {
     #[test]
     fn glyph_mapping_rejects_unknown_and_bad_code() {
         assert_eq!(
-            parse_glyph_mapping("by-slot"),
-            Err(ParseError::Mapping("by-slot".into()))
+            parse_glyph_mapping("by-ordinal"),
+            Err(ParseError::Mapping("by-ordinal".into()))
         );
         assert_eq!(
             parse_glyph_mapping("sequential-from-code:0xZZ"),

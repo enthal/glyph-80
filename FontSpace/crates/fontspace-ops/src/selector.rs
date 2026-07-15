@@ -224,7 +224,12 @@ fn require_code(character_set: &CharacterSet, code: u32) -> Result<(), FontSpace
     }
 }
 
-fn code_at_ordinal(character_set: &CharacterSet, ordinal: usize) -> Result<u32, FontSpaceError> {
+/// The `code` at `ordinal` (entry position) in `character_set`, or `OrdinalOutOfRange`.
+/// Shared by ordinal glyph selectors and the `BySlot` paste mapping (spec/08 §8.3).
+pub(crate) fn code_at_ordinal(
+    character_set: &CharacterSet,
+    ordinal: usize,
+) -> Result<u32, FontSpaceError> {
     character_set
         .entries
         .get(ordinal)
