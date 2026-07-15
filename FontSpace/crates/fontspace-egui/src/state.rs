@@ -6,6 +6,9 @@
 //! editor and other views have real content to show. The GUI owns this state but
 //! **not** font semantics — mutations go through `fontspace-ops` (spec/02).
 
+use std::path::{Path, PathBuf};
+
+use fontspace_json::LoadOutcome;
 use fontspace_model::{
     Bitmap, CharacterEntry, CharacterSet, CharacterSetId, FontSpace, Glyph, GlyphPage, GlyphSet,
     GlyphSetId, GlyphSize, Guide, GuideAxis, GuideId, IdGen, PageId, RandomIdGen,
@@ -28,6 +31,17 @@ pub struct Selection {
     pub code: u32,
 }
 
+/// A file action that would replace the current document, held pending confirmation
+/// while there are unsaved changes (spec/12 §12.12). The guard prevents a click from
+/// silently discarding edits; the user confirms or cancels.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GuardedIntent {
+    /// Choose a file and open it in place of the current document.
+    Open,
+    /// Reload the current document from its file on disk, discarding edits.
+    Revert,
+}
+
 /// The whole editable state of the (single) open document plus view options.
 pub struct AppState {
     pub document: FontSpace,
@@ -38,6 +52,19 @@ pub struct AppState {
     /// Editable sample text for the text-preview view (spec/12 §12.10). UI state,
     /// not document data — it is never written to the `.fontspace.json`.
     pub preview_text: String,
+    /// The file the document is bound to, or `None` for a never-saved document. Save
+    /// writes here; Save As sets it; Open/Revert load from it (spec/12 §12.12).
+    path: Option<PathBuf>,
+    /// Whether the document has edits not yet written to `path` (spec/11 §11.2). Set
+    /// by any document change (including undo/redo) and cleared on save/open; kept
+    /// conservative — it may read dirty after undoing back to the saved state, which
+    /// only ever asks for an unneeded confirm, never risks silent data loss.
+    dirty: bool,
+    /// A document-replacing action awaiting unsaved-changes confirmation (spec/12
+    /// §12.12), or `None` when no modal is open.
+    pending_discard: Option<GuardedIntent>,
+    /// A transient message (last save/open result or error) shown in the status strip.
+    status: Option<String>,
     /// The stroke currently being dragged in the editor, if any (spec/12 §12.4).
     active_stroke: Option<Stroke>,
     /// Workspace-level undo/redo stacks of committed change sets (spec/07 §7.7). A
@@ -67,6 +94,10 @@ impl AppState {
             selection,
             grid: GridLevel::Subtle,
             preview_text: "AAA HAH".to_string(),
+            path: None,
+            dirty: false,
+            pending_discard: None,
+            status: None,
             active_stroke: None,
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
@@ -127,20 +158,19 @@ impl AppState {
         };
         // The selection resolves and cells are in-bounds, so this does not fail; a
         // stroke that paints pixels to their current value yields an empty change set.
-        if let Ok(change_set) = set_pixels(&mut self.document, &request)
-            && !change_set.is_empty()
-        {
-            self.undo_stack.push(change_set);
-            self.redo_stack.clear();
+        if let Ok(change_set) = set_pixels(&mut self.document, &request) {
+            self.record(change_set);
         }
     }
 
-    /// Records a committed change on the undo stack (clearing redo), skipping an
-    /// empty (no-op) change set. The single place edits enter the history.
+    /// Records a committed change on the undo stack (clearing redo) and marks the
+    /// document dirty, skipping an empty (no-op) change set. The single place edits
+    /// enter the history — so it is also the single place the dirty flag is raised.
     fn record(&mut self, change_set: ChangeSet) {
         if !change_set.is_empty() {
             self.undo_stack.push(change_set);
             self.redo_stack.clear();
+            self.dirty = true;
         }
     }
 
@@ -216,6 +246,7 @@ impl AppState {
             // The change set came from this document, so its inverse applies cleanly.
             let _ = undo(&mut self.document, &change_set);
             self.redo_stack.push(change_set);
+            self.dirty = true;
         }
     }
 
@@ -224,6 +255,7 @@ impl AppState {
         if let Some(change_set) = self.redo_stack.pop() {
             let _ = apply_change_set(&mut self.document, &change_set);
             self.undo_stack.push(change_set);
+            self.dirty = true;
         }
     }
 
@@ -333,12 +365,139 @@ impl AppState {
                 character_set_id,
                 code,
             },
-        ) && !change_set.is_empty()
-        {
-            self.undo_stack.push(change_set);
-            self.redo_stack.clear();
+        ) {
+            self.record(change_set);
         }
     }
+
+    // --- Persistence: path binding, dirty tracking, and the unsaved-changes guard
+    // (spec/12 §12.12, spec/11 §11.2). File dialogs and the actual atomic read/write
+    // live in the app shell (`fontspace_json::{read_document, write_document}`); this
+    // state only models what those actions do to the in-memory document. ---
+
+    /// Whether the document has unsaved edits.
+    pub fn is_dirty(&self) -> bool {
+        self.dirty
+    }
+
+    /// The file the document is bound to, if it has been saved/opened.
+    pub fn path(&self) -> Option<&Path> {
+        self.path.as_deref()
+    }
+
+    /// The document's display name: its file name, or `"Untitled"` if never saved.
+    pub fn document_name(&self) -> String {
+        self.path
+            .as_ref()
+            .and_then(|path| path.file_name())
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "Untitled".to_string())
+    }
+
+    /// The transient status message (last save/open outcome or error), if any.
+    pub fn status(&self) -> Option<&str> {
+        self.status.as_deref()
+    }
+
+    /// Sets the status strip to an error message (e.g. a failed save/open).
+    pub fn set_error(&mut self, message: impl Into<String>) {
+        self.status = Some(message.into());
+    }
+
+    /// Records that the document was just written to `path`: binds the file and clears
+    /// the dirty flag (spec/12 §12.12).
+    pub fn mark_saved(&mut self, path: PathBuf) {
+        self.status = Some(format!("Saved {}", display_name(&path)));
+        self.path = Some(path);
+        self.dirty = false;
+    }
+
+    /// Replaces the document with a freshly loaded one bound to `path` (Open/Revert):
+    /// resets selection, clears history and any in-progress interaction, and marks the
+    /// document clean. Load warnings (e.g. dangling glyphs) go to the status strip.
+    pub fn load_document(&mut self, outcome: LoadOutcome, path: PathBuf) {
+        self.document = outcome.document;
+        self.undo_stack.clear();
+        self.redo_stack.clear();
+        self.active_stroke = None;
+        self.pending_remove = None;
+        if let Some(selection) = default_selection(&self.document) {
+            self.selection = selection;
+        }
+        self.status = Some(load_status(&path, &outcome.warnings));
+        self.path = Some(path);
+        self.dirty = false;
+    }
+
+    /// Whether a Revert is possible: the document is file-bound and has unsaved edits.
+    pub fn can_revert(&self) -> bool {
+        self.path.is_some() && self.dirty
+    }
+
+    /// Begins a document-replacing action. Returns `true` if it may proceed
+    /// immediately (no unsaved edits); returns `false` and arms the confirmation modal
+    /// when the document is dirty (spec/12 §12.12).
+    pub fn begin_guarded(&mut self, intent: GuardedIntent) -> bool {
+        if self.dirty {
+            self.pending_discard = Some(intent);
+            false
+        } else {
+            true
+        }
+    }
+
+    /// The action awaiting unsaved-changes confirmation, if the modal is open.
+    pub fn pending_discard(&self) -> Option<GuardedIntent> {
+        self.pending_discard
+    }
+
+    /// Dismisses the unsaved-changes modal, taking the pending intent so the caller can
+    /// carry it out (the user chose "Discard"). Returns `None` if nothing was pending.
+    pub fn take_pending_discard(&mut self) -> Option<GuardedIntent> {
+        self.pending_discard.take()
+    }
+
+    /// Cancels the unsaved-changes modal, keeping the current document (spec/12 §12.12).
+    pub fn cancel_discard(&mut self) {
+        self.pending_discard = None;
+    }
+}
+
+/// A path's file name for display, falling back to the whole path.
+fn display_name(path: &Path) -> String {
+    path.file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.display().to_string())
+}
+
+/// The status line shown after a successful load: the file name, plus a count of any
+/// tolerated warnings so the user knows the document loaded but wasn't pristine.
+fn load_status(path: &Path, warnings: &[fontspace_model::ValidationWarning]) -> String {
+    let name = display_name(path);
+    if warnings.is_empty() {
+        format!("Opened {name}")
+    } else {
+        format!("Opened {name} ({} warning(s))", warnings.len())
+    }
+}
+
+/// A sensible initial selection for a freshly loaded document: the first glyph set's
+/// first page, pointed at the first character-set entry (or first stored glyph, or
+/// code 0). `None` if the document has no glyph set with a page — the views then show
+/// their "nothing selected" guidance until a create-object slice lands.
+fn default_selection(document: &FontSpace) -> Option<Selection> {
+    let glyph_set = document.glyph_sets.first()?;
+    let page = glyph_set.pages.first()?;
+    let code = document
+        .character_set(glyph_set.character_set_id)
+        .and_then(|cs| cs.entries.first().map(|entry| entry.code))
+        .or_else(|| page.glyphs.first().map(|glyph| glyph.code))
+        .unwrap_or(0);
+    Some(Selection {
+        glyph_set_id: glyph_set.id,
+        page_id: page.id,
+        code,
+    })
 }
 
 /// An 8×8 demo document: a character set with entries `A`–`H`, one glyph set with a
@@ -575,5 +734,108 @@ mod tests {
         state.begin_stroke((7, 7));
         state.commit_stroke();
         assert!(!state.can_redo());
+    }
+
+    #[test]
+    fn a_fresh_document_is_clean_and_untitled() {
+        let state = editable_state();
+        assert!(!state.is_dirty());
+        assert_eq!(state.path(), None);
+        assert_eq!(state.document_name(), "Untitled");
+        assert!(!state.can_revert());
+    }
+
+    #[test]
+    fn editing_marks_dirty_and_saving_marks_clean() {
+        let mut state = editable_state();
+        state.begin_stroke((0, 0));
+        state.commit_stroke();
+        assert!(state.is_dirty());
+
+        let path = PathBuf::from("/tmp/demo.fontspace.json");
+        state.mark_saved(path.clone());
+        assert!(!state.is_dirty());
+        assert_eq!(state.path(), Some(path.as_path()));
+        assert_eq!(state.document_name(), "demo.fontspace.json");
+    }
+
+    #[test]
+    fn undo_and_redo_keep_the_document_dirty() {
+        // Dirty is conservative: undoing back toward the saved state still reads dirty
+        // (safe direction — an unneeded confirm, never silent loss).
+        let mut state = editable_state();
+        state.begin_stroke((0, 0));
+        state.commit_stroke();
+        state.mark_saved(PathBuf::from("/tmp/demo.fontspace.json"));
+        assert!(!state.is_dirty());
+        state.undo();
+        assert!(state.is_dirty());
+        state.redo();
+        assert!(state.is_dirty());
+    }
+
+    #[test]
+    fn guarded_action_proceeds_when_clean_and_arms_a_modal_when_dirty() {
+        let mut state = editable_state();
+        // Clean: proceeds immediately, nothing pending.
+        assert!(state.begin_guarded(GuardedIntent::Open));
+        assert_eq!(state.pending_discard(), None);
+
+        state.begin_stroke((0, 0));
+        state.commit_stroke();
+        // Dirty: does not proceed; arms the confirmation.
+        assert!(!state.begin_guarded(GuardedIntent::Open));
+        assert_eq!(state.pending_discard(), Some(GuardedIntent::Open));
+
+        // Cancel keeps the document; take (Discard) hands the intent back once.
+        state.cancel_discard();
+        assert_eq!(state.pending_discard(), None);
+        state.begin_guarded(GuardedIntent::Revert);
+        assert_eq!(state.take_pending_discard(), Some(GuardedIntent::Revert));
+        assert_eq!(state.take_pending_discard(), None);
+    }
+
+    #[test]
+    fn can_revert_only_when_file_bound_and_dirty() {
+        let mut state = editable_state();
+        state.begin_stroke((0, 0));
+        state.commit_stroke();
+        // Dirty but never saved → nothing to revert to.
+        assert!(!state.can_revert());
+        state.mark_saved(PathBuf::from("/tmp/demo.fontspace.json"));
+        // Saved (clean) → nothing to revert.
+        assert!(!state.can_revert());
+        state.begin_stroke((7, 7));
+        state.commit_stroke();
+        // File-bound and dirty → revert is available.
+        assert!(state.can_revert());
+    }
+
+    #[test]
+    fn loading_a_document_resets_history_selection_and_dirt() {
+        let mut state = editable_state();
+        // Dirty it and stack up history + a pending remove.
+        state.begin_stroke((0, 0));
+        state.commit_stroke();
+        state.request_remove(0x41);
+        assert!(state.is_dirty() && state.can_undo());
+
+        // Load a distinct clean document (a fresh starter) bound to a path.
+        let fresh = AppState::with_ids(Box::new(SequentialIdGen::new()));
+        let outcome = LoadOutcome {
+            document: fresh.document,
+            warnings: Vec::new(),
+        };
+        let path = PathBuf::from("/tmp/opened.fontspace.json");
+        state.load_document(outcome, path.clone());
+
+        assert!(!state.is_dirty());
+        assert!(!state.can_undo() && !state.can_redo());
+        assert_eq!(state.pending_remove(), None);
+        assert_eq!(state.path(), Some(path.as_path()));
+        // Selection resolves against the loaded document and lands on 'A'.
+        assert!(state.selected_context().is_some());
+        assert_eq!(state.selection.code, 0x41);
+        assert_eq!(state.status(), Some("Opened opened.fontspace.json"));
     }
 }

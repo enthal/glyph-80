@@ -5,19 +5,25 @@
 //! `fontspace-ops` operations. It never owns font semantics. All non-trivial logic
 //! (the default layout) lives in pure, tested functions in [`crate::layout`].
 
+use std::path::{Path, PathBuf};
+
 use egui_tiles::{Tile, Tree};
 
 use crate::charset_view::show_character_set;
 use crate::editor::show_glyph_editor;
 use crate::layout::{Pane, default_tree, panes_in};
 use crate::page_overview::show_page_overview;
-use crate::state::AppState;
+use crate::state::{AppState, GuardedIntent};
 use crate::text_preview::show_text_preview;
 
 /// The FontSpace desktop application.
 pub struct FontSpaceApp {
     tree: Tree<Pane>,
     state: AppState,
+    /// The last OS window title we pushed, so we only send a viewport command when it
+    /// actually changes. Sending one every frame would request a repaint every frame
+    /// and the UI would never settle (breaking the snapshot harness's fixed-point run).
+    last_title: String,
 }
 
 impl Default for FontSpaceApp {
@@ -25,6 +31,7 @@ impl Default for FontSpaceApp {
         Self {
             tree: default_tree(),
             state: AppState::default(),
+            last_title: String::new(),
         }
     }
 }
@@ -43,6 +50,7 @@ impl FontSpaceApp {
         Self {
             tree: default_tree(),
             state,
+            last_title: String::new(),
         }
     }
 
@@ -68,8 +76,41 @@ impl FontSpaceApp {
     pub fn show(&mut self, ui: &mut egui::Ui) {
         self.handle_shortcuts(ui.ctx());
 
+        // Reflect the document name and dirty state in the OS window title (spec/12
+        // §12.12), but only when it changes — a per-frame viewport command would keep
+        // requesting repaints and never let the UI settle.
+        let title = window_title(&self.state.document_name(), self.state.is_dirty());
+        if self.last_title != title {
+            self.last_title = title.clone();
+            ui.ctx()
+                .send_viewport_cmd(egui::ViewportCommand::Title(title));
+        }
+
         egui::Panel::top("menu_bar").show(ui, |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
+                ui.menu_button("File", |ui| {
+                    if ui.button("Open...").clicked() {
+                        self.action_open();
+                        ui.close();
+                    }
+                    ui.separator();
+                    if ui.button("Save").clicked() {
+                        self.action_save();
+                        ui.close();
+                    }
+                    if ui.button("Save As...").clicked() {
+                        self.action_save_as();
+                        ui.close();
+                    }
+                    ui.separator();
+                    if ui
+                        .add_enabled(self.state.can_revert(), egui::Button::new("Revert"))
+                        .clicked()
+                    {
+                        self.action_revert();
+                        ui.close();
+                    }
+                });
                 ui.menu_button("Edit", |ui| {
                     if ui
                         .add_enabled(self.state.can_undo(), egui::Button::new("Undo"))
@@ -96,16 +137,66 @@ impl FontSpaceApp {
                         ui.close();
                     }
                 });
+
+                // The document name and unsaved marker, right-aligned in the bar.
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.label(title_label(
+                        &self.state.document_name(),
+                        self.state.is_dirty(),
+                    ));
+                });
             });
         });
 
+        self.show_discard_modal(ui.ctx());
+
+        // A one-line status strip for the last save/open result or error (spec/12
+        // §12.12): only present when there is something to report.
+        if let Some(status) = self.state.status() {
+            egui::Panel::bottom("status_bar").show(ui, |ui| {
+                ui.label(status);
+            });
+        }
+
         // Split the borrow so the tiles behavior can hold `&mut state` while `tree` is
         // driven mutably (disjoint fields of `self`).
-        let Self { tree, state } = self;
+        let Self { tree, state, .. } = self;
         let mut behavior = PaneBehavior { state };
         egui::CentralPanel::default().show(ui, |ui| {
             tree.ui(&mut behavior, ui);
         });
+    }
+
+    /// Shows the unsaved-changes confirmation when a document-replacing action is
+    /// pending (spec/12 §12.12). The buttons only set local flags; the intent is
+    /// carried out after the modal closure so `self` is free to mutate.
+    fn show_discard_modal(&mut self, ctx: &egui::Context) {
+        if self.state.pending_discard().is_none() {
+            return;
+        }
+        let name = self.state.document_name();
+        let mut cancel = false;
+        let mut discard = false;
+        let modal = egui::Modal::new(egui::Id::new("discard_confirm")).show(ctx, |ui| {
+            ui.set_width(320.0);
+            ui.heading("Unsaved changes");
+            ui.add_space(4.0);
+            ui.label(format!("Discard unsaved changes to {name}?"));
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                if ui.button("Cancel").clicked() {
+                    cancel = true;
+                }
+                if ui.button("Discard").clicked() {
+                    discard = true;
+                }
+            });
+        });
+        if cancel || modal.should_close() {
+            self.state.cancel_discard();
+        } else if discard && let Some(intent) = self.state.take_pending_discard() {
+            self.perform_guarded(intent);
+        }
     }
 
     /// Consumes the undo/redo keyboard shortcuts (spec/12 §12.5). `COMMAND` maps to
@@ -114,18 +205,138 @@ impl FontSpaceApp {
         use egui::{Key, KeyboardShortcut, Modifiers};
         let undo = KeyboardShortcut::new(Modifiers::COMMAND, Key::Z);
         let redo = KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::Z);
-        // Consume redo FIRST: egui matches modifiers *logically*, so the plain-Cmd+Z
-        // `undo` pattern also matches a Cmd+Shift+Z press. Claiming redo first removes
-        // that event before `undo` can swallow it (redo's Cmd+Shift+Z pattern never
-        // matches a bare Cmd+Z, since a required Shift can't be missing).
-        let (do_redo, do_undo) =
-            ctx.input_mut(|i| (i.consume_shortcut(&redo), i.consume_shortcut(&undo)));
+        let save = KeyboardShortcut::new(Modifiers::COMMAND, Key::S);
+        let save_as = KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::S);
+        let open = KeyboardShortcut::new(Modifiers::COMMAND, Key::O);
+        // Consume the Shift-modified shortcuts (redo, save-as) FIRST: egui matches
+        // modifiers *logically*, so a bare-Cmd pattern (undo, save) also matches its
+        // Cmd+Shift press. Claiming the Shift variant first removes that event before
+        // the bare pattern can swallow it (the reverse can't misfire — a required
+        // Shift can't be absent from a bare-Cmd press). Same fix as spec §12.5.
+        let (do_redo, do_save_as, do_undo, do_save, do_open) = ctx.input_mut(|i| {
+            (
+                i.consume_shortcut(&redo),
+                i.consume_shortcut(&save_as),
+                i.consume_shortcut(&undo),
+                i.consume_shortcut(&save),
+                i.consume_shortcut(&open),
+            )
+        });
         if do_redo {
             self.state.redo();
         } else if do_undo {
             self.state.undo();
         }
+        if do_save_as {
+            self.action_save_as();
+        } else if do_save {
+            self.action_save();
+        }
+        if do_open {
+            self.action_open();
+        }
     }
+
+    // --- File actions (spec/12 §12.12). Each is the thin glue between a native file
+    // dialog (`rfd`) and the pure state transitions on `AppState`; the atomic read/
+    // write lives in `fontspace_json`. Dialogs run only on user action, never in
+    // tests, so this layer stays free of headless concerns. ---
+
+    /// Open: guard unsaved changes, then (once cleared) pick and load a file.
+    fn action_open(&mut self) {
+        if self.state.begin_guarded(GuardedIntent::Open) {
+            self.open_via_dialog();
+        }
+    }
+
+    /// Save: write to the bound file, or fall back to Save As when never saved.
+    fn action_save(&mut self) {
+        match self.state.path().map(Path::to_path_buf) {
+            Some(path) => self.write_to(path),
+            None => self.action_save_as(),
+        }
+    }
+
+    /// Save As: pick a destination, write there, and bind the document to it.
+    fn action_save_as(&mut self) {
+        let suggested = self
+            .state
+            .path()
+            .and_then(|path| path.file_name())
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "untitled.fontspace.json".to_string());
+        let Some(path) = rfd::FileDialog::new()
+            .add_filter("FontSpace document", &["json"])
+            .set_file_name(suggested)
+            .save_file()
+        else {
+            return; // dialog cancelled
+        };
+        self.write_to(path);
+    }
+
+    /// Revert: reload the bound file, discarding edits (guarded by confirmation).
+    fn action_revert(&mut self) {
+        if self.state.can_revert() && self.state.begin_guarded(GuardedIntent::Revert) {
+            self.do_revert();
+        }
+    }
+
+    /// Runs a confirmed document-replacing action (the user chose "Discard").
+    fn perform_guarded(&mut self, intent: GuardedIntent) {
+        match intent {
+            GuardedIntent::Open => self.open_via_dialog(),
+            GuardedIntent::Revert => self.do_revert(),
+        }
+    }
+
+    fn open_via_dialog(&mut self) {
+        let Some(path) = rfd::FileDialog::new()
+            .add_filter("FontSpace document", &["json"])
+            .pick_file()
+        else {
+            return; // dialog cancelled
+        };
+        self.load_path(path);
+    }
+
+    fn do_revert(&mut self) {
+        if let Some(path) = self.state.path().map(Path::to_path_buf) {
+            self.load_path(path);
+        }
+    }
+
+    /// Reads `path` and replaces the document, or reports the failure in the status
+    /// strip (a failed load never disturbs the current document — spec/16 §16.2).
+    fn load_path(&mut self, path: PathBuf) {
+        match fontspace_json::read_document(&path) {
+            Ok(outcome) => self.state.load_document(outcome, path),
+            Err(err) => self.state.set_error(err.to_string()),
+        }
+    }
+
+    /// Writes the document to `path` atomically and binds it, or reports the failure.
+    fn write_to(&mut self, path: PathBuf) {
+        match fontspace_json::write_document(&path, &self.state.document) {
+            Ok(()) => self.state.mark_saved(path),
+            Err(err) => self.state.set_error(format!("Save failed: {err}")),
+        }
+    }
+}
+
+/// The in-window document label: the file name (or "Untitled") with a leading `*`
+/// when there are unsaved changes. ASCII marker so it renders in every font.
+fn title_label(name: &str, dirty: bool) -> String {
+    if dirty {
+        format!("* {name}")
+    } else {
+        name.to_string()
+    }
+}
+
+/// The OS window title: the document label followed by the app name.
+fn window_title(name: &str, dirty: bool) -> String {
+    format!("{} - FontSpace", title_label(name, dirty))
 }
 
 impl eframe::App for FontSpaceApp {
@@ -242,5 +453,39 @@ mod tests {
         // Redo fired: the redo entry moved back onto the undo stack.
         assert!(!app.state.can_redo());
         assert!(app.state.can_undo());
+    }
+
+    #[test]
+    fn title_label_and_window_title_mark_unsaved_edits() {
+        assert_eq!(title_label("Untitled", false), "Untitled");
+        assert_eq!(title_label("Untitled", true), "* Untitled");
+        assert_eq!(
+            title_label("demo.fontspace.json", true),
+            "* demo.fontspace.json"
+        );
+        assert_eq!(
+            window_title("demo.fontspace.json", false),
+            "demo.fontspace.json - FontSpace"
+        );
+        assert_eq!(window_title("Untitled", true), "* Untitled - FontSpace");
+    }
+
+    #[test]
+    fn open_on_a_dirty_document_arms_the_confirmation_instead_of_opening() {
+        // On a dirty document the guard must fire *before* any file dialog, so calling
+        // the action is safe (and testable) headlessly: no dialog, just a pending
+        // intent. (A clean document would proceed straight to the native picker.)
+        let mut app = FontSpaceApp::default();
+        app.state.begin_stroke((0, 0));
+        app.state.commit_stroke();
+        assert!(app.state.is_dirty());
+
+        app.action_open();
+        assert_eq!(app.state.pending_discard(), Some(GuardedIntent::Open));
+
+        // Cancelling keeps the (still dirty) document.
+        app.state.cancel_discard();
+        assert_eq!(app.state.pending_discard(), None);
+        assert!(app.state.is_dirty());
     }
 }

@@ -19,6 +19,9 @@ fontspace-json = { path = "../fontspace-json" }
 eframe = "0.35.0"
 egui = "0.35.0"
 egui_tiles = "0.16.0"
+# Native Open/Save file dialogs. Default features use the XDG desktop portal on
+# Linux (no GTK build deps) and the native panels on macOS/Windows (spec/12 §12.12).
+rfd = "0.17"
 
 [dev-dependencies]
 egui_kittest = { version = "0.35.0", features = ["wgpu", "snapshot"] }
