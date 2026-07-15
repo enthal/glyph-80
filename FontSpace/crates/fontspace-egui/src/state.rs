@@ -1,10 +1,12 @@
-//! Application document state: the in-memory `FontSpace` the GUI edits, the current
-//! selection, and editor view options.
+//! Application workspace state: the open FontSpace document(s) the GUI edits, the
+//! active document's selection, and editor view options.
 //!
-//! Persistence (open/save) and the multi-document workspace arrive in later slices
-//! (spec/11); until then the app opens a small in-memory starter document so the
-//! editor and other views have real content to show. The GUI owns this state but
-//! **not** font semantics — mutations go through `fontspace-ops` (spec/02).
+//! The workspace holds its documents as [`OpenDocument`]s ([`crate::workspace`]); this
+//! slice keeps exactly one, the **active** document, and exposes it through an
+//! active-document facade ([`AppState::document`], [`AppState::selection`], …). Opening
+//! several at once and switching between them arrive in a later slice (spec/11). The
+//! GUI owns this state but **not** font semantics — mutations go through
+//! `fontspace-ops` (spec/02).
 
 use std::path::{Path, PathBuf};
 
@@ -13,6 +15,7 @@ use fontspace_model::{
     Bitmap, CharacterEntry, CharacterSet, CharacterSetId, FontSpace, Glyph, GlyphPage, GlyphSet,
     GlyphSetId, GlyphSize, Guide, GuideAxis, GuideId, IdGen, PageId, RandomIdGen,
 };
+
 use fontspace_ops::{
     AddGuide, ChangeSet, FontSpaceWarning, GlyphRef, MoveGuide, RemoveCharacterEntry, RemoveGuide,
     SetGuideVisible, SetPixels, add_guide, apply_change_set, move_guide, remove_character_entry,
@@ -21,6 +24,7 @@ use fontspace_ops::{
 
 use crate::editor::geometry::GridLevel;
 use crate::editor::stroke::Stroke;
+use crate::workspace::{DocumentId, OpenDocument};
 
 /// What the editor and inspector are currently pointed at: one glyph, identified by
 /// its glyph set, page, and character `code` (spec/12 §12.3).
@@ -42,24 +46,24 @@ pub enum GuardedIntent {
     Revert,
 }
 
-/// The whole editable state of the (single) open document plus view options.
+/// The editable state of the workspace: the active open document plus view options.
+///
+/// The active document's content, path, dirty flag, and selection live on its
+/// [`OpenDocument`] (`active`) and are reached through the facade accessors below, so
+/// generalizing to several open documents later touches only this struct — not the
+/// views. Path binding, the dirty flag (spec/11 §11.2), and the unsaved-changes guard
+/// are conservative: dirty may read true after undoing back to the saved state, which
+/// only ever asks for an unneeded confirm, never risks silent data loss.
 pub struct AppState {
-    pub document: FontSpace,
+    /// The active open document — the one the views render and edit. A workspace of
+    /// several documents with switching arrives in a later slice (spec/11 §11.1).
+    active: OpenDocument,
     /// Injected id source for object-creating operations (spec/03 §Id injection).
     pub ids: Box<dyn IdGen>,
-    pub selection: Selection,
     pub grid: GridLevel,
     /// Editable sample text for the text-preview view (spec/12 §12.10). UI state,
     /// not document data — it is never written to the `.fontspace.json`.
     pub preview_text: String,
-    /// The file the document is bound to, or `None` for a never-saved document. Save
-    /// writes here; Save As sets it; Open/Revert load from it (spec/12 §12.12).
-    path: Option<PathBuf>,
-    /// Whether the document has edits not yet written to `path` (spec/11 §11.2). Set
-    /// by any document change (including undo/redo) and cleared on save/open; kept
-    /// conservative — it may read dirty after undoing back to the saved state, which
-    /// only ever asks for an unneeded confirm, never risks silent data loss.
-    dirty: bool,
     /// A document-replacing action awaiting unsaved-changes confirmation (spec/12
     /// §12.12), or `None` when no modal is open.
     pending_discard: Option<GuardedIntent>,
@@ -89,15 +93,15 @@ impl AppState {
     /// Builds the starter document with the given id source (production wires
     /// [`RandomIdGen`]; tests can wire a `SequentialIdGen` for reproducibility).
     pub fn with_ids(mut ids: Box<dyn IdGen>) -> Self {
-        let (document, selection) = starter_document(ids.as_mut());
+        let (content, selection) = starter_document(ids.as_mut());
+        // Mint the runtime-only DocumentId after the content so the document's own
+        // object ids keep their sequential positions (tests stay reproducible).
+        let active = OpenDocument::new(DocumentId::new(ids.as_mut()), content, selection);
         Self {
-            document,
+            active,
             ids,
-            selection,
             grid: GridLevel::Subtle,
             preview_text: "AAA HAH".to_string(),
-            path: None,
-            dirty: false,
             pending_discard: None,
             status: None,
             active_stroke: None,
@@ -107,10 +111,21 @@ impl AppState {
         }
     }
 
+    /// The active document's content — what the views render and edit (the facade over
+    /// the workspace; generalizing to several documents keeps this signature).
+    pub fn document(&self) -> &FontSpace {
+        &self.active.content
+    }
+
+    /// The active document's current selection (spec/12 §12.3).
+    pub fn selection(&self) -> Selection {
+        self.active.selection
+    }
+
     /// Points the selection at `code` within the current glyph set and page (e.g.
     /// from clicking a page-overview thumbnail).
     pub fn select_code(&mut self, code: u32) {
-        self.selection.code = code;
+        self.active.selection.code = code;
     }
 
     /// The current value of pixel `(x, y)` on the selected glyph (`false` if the
@@ -152,15 +167,15 @@ impl AppState {
         }
         let request = SetPixels {
             target: GlyphRef {
-                glyph_set_id: self.selection.glyph_set_id,
-                page_id: self.selection.page_id,
-                code: self.selection.code,
+                glyph_set_id: self.active.selection.glyph_set_id,
+                page_id: self.active.selection.page_id,
+                code: self.active.selection.code,
             },
             edits: stroke.edits(),
         };
         // The selection resolves and cells are in-bounds, so this does not fail; a
         // stroke that paints pixels to their current value yields an empty change set.
-        if let Ok(change_set) = set_pixels(&mut self.document, &request) {
+        if let Ok(change_set) = set_pixels(&mut self.active.content, &request) {
             self.record(change_set);
         }
     }
@@ -172,7 +187,7 @@ impl AppState {
         if !change_set.is_empty() {
             self.undo_stack.push(change_set);
             self.redo_stack.clear();
-            self.dirty = true;
+            self.active.dirty = true;
         }
     }
 
@@ -183,15 +198,15 @@ impl AppState {
             GuideAxis::Vertical => "v-guide",
         };
         let request = AddGuide {
-            glyph_set_id: self.selection.glyph_set_id,
-            page_id: self.selection.page_id,
+            glyph_set_id: self.active.selection.glyph_set_id,
+            page_id: self.active.selection.page_id,
             name: name.to_string(),
             axis,
             position: 0,
             visible: true,
             locked: false,
         };
-        if let Ok(change_set) = add_guide(&mut self.document, &request, self.ids.as_mut()) {
+        if let Ok(change_set) = add_guide(&mut self.active.content, &request, self.ids.as_mut()) {
             self.record(change_set);
         }
     }
@@ -199,11 +214,11 @@ impl AppState {
     /// Removes a guide from the selected page as one undo entry (spec/12 §12.6).
     pub fn remove_guide(&mut self, guide_id: GuideId) {
         let request = RemoveGuide {
-            glyph_set_id: self.selection.glyph_set_id,
-            page_id: self.selection.page_id,
+            glyph_set_id: self.active.selection.glyph_set_id,
+            page_id: self.active.selection.page_id,
             guide_id,
         };
-        if let Ok(change_set) = remove_guide(&mut self.document, &request) {
+        if let Ok(change_set) = remove_guide(&mut self.active.content, &request) {
             self.record(change_set);
         }
     }
@@ -211,12 +226,12 @@ impl AppState {
     /// Shows/hides a guide as one undo entry (spec/12 §12.6).
     pub fn set_guide_visible(&mut self, guide_id: GuideId, visible: bool) {
         let request = SetGuideVisible {
-            glyph_set_id: self.selection.glyph_set_id,
-            page_id: self.selection.page_id,
+            glyph_set_id: self.active.selection.glyph_set_id,
+            page_id: self.active.selection.page_id,
             guide_id,
             visible,
         };
-        if let Ok(change_set) = set_guide_visible(&mut self.document, &request) {
+        if let Ok(change_set) = set_guide_visible(&mut self.active.content, &request) {
             self.record(change_set);
         }
     }
@@ -224,12 +239,12 @@ impl AppState {
     /// Moves a guide to `position` (a grid-line coordinate) as one undo entry.
     pub fn move_guide(&mut self, guide_id: GuideId, position: i32) {
         let request = MoveGuide {
-            glyph_set_id: self.selection.glyph_set_id,
-            page_id: self.selection.page_id,
+            glyph_set_id: self.active.selection.glyph_set_id,
+            page_id: self.active.selection.page_id,
             guide_id,
             position,
         };
-        if let Ok(change_set) = move_guide(&mut self.document, &request) {
+        if let Ok(change_set) = move_guide(&mut self.active.content, &request) {
             self.record(change_set);
         }
     }
@@ -246,53 +261,69 @@ impl AppState {
     pub fn undo(&mut self) {
         if let Some(change_set) = self.undo_stack.pop() {
             // The change set came from this document, so its inverse applies cleanly.
-            let _ = undo(&mut self.document, &change_set);
+            let _ = undo(&mut self.active.content, &change_set);
             self.redo_stack.push(change_set);
-            self.dirty = true;
+            self.active.dirty = true;
         }
     }
 
     /// Redoes the most recently undone change (spec/07 §7.7).
     pub fn redo(&mut self) {
         if let Some(change_set) = self.redo_stack.pop() {
-            let _ = apply_change_set(&mut self.document, &change_set);
+            let _ = apply_change_set(&mut self.active.content, &change_set);
             self.undo_stack.push(change_set);
-            self.dirty = true;
+            self.active.dirty = true;
         }
     }
 
     /// The selected glyph set and page, if the selection still resolves.
     pub fn selected_context(&self) -> Option<(&GlyphSet, &GlyphPage)> {
-        let glyph_set = self.document.glyph_set(self.selection.glyph_set_id)?;
-        let page = glyph_set.page_of_id(self.selection.page_id)?;
+        let glyph_set = self
+            .active
+            .content
+            .glyph_set(self.active.selection.glyph_set_id)?;
+        let page = glyph_set.page_of_id(self.active.selection.page_id)?;
         Some((glyph_set, page))
     }
 
     /// The bitmap of the selected glyph, if one is stored (absent → blank in the UI).
     pub fn selected_bitmap(&self) -> Option<&Bitmap> {
         let (_, page) = self.selected_context()?;
-        page.glyph_of_code(self.selection.code).map(|g| &g.bitmap)
+        page.glyph_of_code(self.active.selection.code)
+            .map(|g| &g.bitmap)
     }
 
     /// The label of the selected code in the glyph set's character set, if any.
     pub fn selected_label(&self) -> Option<&str> {
-        let glyph_set = self.document.glyph_set(self.selection.glyph_set_id)?;
-        let character_set = self.document.character_set(glyph_set.character_set_id)?;
+        let glyph_set = self
+            .active
+            .content
+            .glyph_set(self.active.selection.glyph_set_id)?;
+        let character_set = self
+            .active
+            .content
+            .character_set(glyph_set.character_set_id)?;
         character_set
-            .entry(self.selection.code)
+            .entry(self.active.selection.code)
             .map(|entry| entry.label.as_str())
     }
 
     /// The character set referenced by the selected glyph set, if it resolves.
     pub fn selected_character_set(&self) -> Option<&CharacterSet> {
-        let glyph_set = self.document.glyph_set(self.selection.glyph_set_id)?;
-        self.document.character_set(glyph_set.character_set_id)
+        let glyph_set = self
+            .active
+            .content
+            .glyph_set(self.active.selection.glyph_set_id)?;
+        self.active
+            .content
+            .character_set(glyph_set.character_set_id)
     }
 
     fn selected_character_set_id(&self) -> Option<CharacterSetId> {
         Some(
-            self.document
-                .glyph_set(self.selection.glyph_set_id)?
+            self.active
+                .content
+                .glyph_set(self.active.selection.glyph_set_id)?
                 .character_set_id,
         )
     }
@@ -301,7 +332,7 @@ impl AppState {
     /// cascade-delete (spec/07 §7.8). Computed by dry-running the op on a clone, so
     /// the real document is untouched.
     fn remove_cascade_count(&self, character_set_id: CharacterSetId, code: u32) -> usize {
-        let mut preview = self.document.clone();
+        let mut preview = self.active.content.clone();
         let Ok(change_set) = remove_character_entry(
             &mut preview,
             &RemoveCharacterEntry {
@@ -362,7 +393,7 @@ impl AppState {
             return;
         };
         if let Ok(change_set) = remove_character_entry(
-            &mut self.document,
+            &mut self.active.content,
             &RemoveCharacterEntry {
                 character_set_id,
                 code,
@@ -379,21 +410,18 @@ impl AppState {
 
     /// Whether the document has unsaved edits.
     pub fn is_dirty(&self) -> bool {
-        self.dirty
+        self.active.dirty
     }
 
     /// The file the document is bound to, if it has been saved/opened.
     pub fn path(&self) -> Option<&Path> {
-        self.path.as_deref()
+        self.active.path.as_deref()
     }
 
-    /// The document's display name: its file name, or `"Untitled"` if never saved.
+    /// The active document's display name: its file name, or `"Untitled"` if never
+    /// saved.
     pub fn document_name(&self) -> String {
-        self.path
-            .as_ref()
-            .and_then(|path| path.file_name())
-            .map(|name| name.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "Untitled".to_string())
+        self.active.display_name()
     }
 
     /// The status message (last save/open outcome or error), if any.
@@ -410,37 +438,37 @@ impl AppState {
     /// the dirty flag (spec/12 §12.12).
     pub fn mark_saved(&mut self, path: PathBuf) {
         self.status = Some(format!("Saved {}", display_name(&path)));
-        self.path = Some(path);
-        self.dirty = false;
+        self.active.path = Some(path);
+        self.active.dirty = false;
     }
 
     /// Replaces the document with a freshly loaded one bound to `path` (Open/Revert):
     /// resets selection, clears history and any in-progress interaction, and marks the
     /// document clean. Load warnings (e.g. dangling glyphs) go to the status strip.
     pub fn load_document(&mut self, outcome: LoadOutcome, path: PathBuf) {
-        self.document = outcome.document;
+        self.active.content = outcome.document;
         self.undo_stack.clear();
         self.redo_stack.clear();
         self.active_stroke = None;
         self.pending_remove = None;
-        if let Some(selection) = default_selection(&self.document) {
-            self.selection = selection;
+        if let Some(selection) = default_selection(&self.active.content) {
+            self.active.selection = selection;
         }
         self.status = Some(load_status(&path, &outcome.warnings));
-        self.path = Some(path);
-        self.dirty = false;
+        self.active.path = Some(path);
+        self.active.dirty = false;
     }
 
     /// Whether a Revert is possible: the document is file-bound and has unsaved edits.
     pub fn can_revert(&self) -> bool {
-        self.path.is_some() && self.dirty
+        self.active.path.is_some() && self.active.dirty
     }
 
     /// Begins a document-replacing action. Returns `true` if it may proceed
     /// immediately (no unsaved edits); returns `false` and arms the confirmation modal
     /// when the document is dirty (spec/12 §12.12).
     pub fn begin_guarded(&mut self, intent: GuardedIntent) -> bool {
-        if self.dirty {
+        if self.active.dirty {
             self.pending_discard = Some(intent);
             false
         } else {
@@ -573,7 +601,7 @@ mod tests {
         // The selection resolves and the selected glyph is the drawn 'A'.
         let (glyph_set, _page) = state.selected_context().expect("selection resolves");
         assert_eq!(glyph_set.glyph_size, GlyphSize::new(8, 8));
-        assert_eq!(state.selection.code, 0x41);
+        assert_eq!(state.selection().code, 0x41);
         let bitmap = state.selected_bitmap().expect("A is drawn");
         assert!(!bitmap.is_blank());
         assert_eq!(state.selected_label(), Some("A"));
@@ -825,7 +853,7 @@ mod tests {
         // Load a distinct clean document (a fresh starter) bound to a path.
         let fresh = AppState::with_ids(Box::new(SequentialIdGen::new()));
         let outcome = LoadOutcome {
-            document: fresh.document,
+            document: fresh.document().clone(),
             warnings: Vec::new(),
         };
         let path = PathBuf::from("/tmp/opened.fontspace.json");
@@ -837,7 +865,7 @@ mod tests {
         assert_eq!(state.path(), Some(path.as_path()));
         // Selection resolves against the loaded document and lands on 'A'.
         assert!(state.selected_context().is_some());
-        assert_eq!(state.selection.code, 0x41);
+        assert_eq!(state.selection().code, 0x41);
         assert_eq!(state.status(), Some("Opened opened.fontspace.json"));
     }
 }

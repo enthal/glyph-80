@@ -41,7 +41,7 @@ pub fn show_text_preview(ui: &mut egui::Ui, state: &mut AppState) {
         return;
     };
     let size = glyph_set.glyph_size;
-    let character_set = state.document.character_set(glyph_set.character_set_id);
+    let character_set = state.document().character_set(glyph_set.character_set_id);
     let codes = preview_codes(&state.preview_text, character_set);
 
     if codes.is_empty() {

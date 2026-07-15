@@ -16,6 +16,9 @@ fontspace-model = { path = "../fontspace-model" }
 fontspace-ops = { path = "../fontspace-ops" }
 fontspace-render = { path = "../fontspace-render" }
 fontspace-json = { path = "../fontspace-json" }
+# Runtime-only per-open-document identity (`DocumentId`, spec/11 §11.1), minted from
+# the injected `IdGen`. No `v4` feature — ids come from the generator, never ambient.
+uuid = "1"
 eframe = "0.35.0"
 egui = "0.35.0"
 egui_tiles = "0.16.0"

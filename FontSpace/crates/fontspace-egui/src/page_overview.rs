@@ -64,16 +64,16 @@ pub fn overview_entries(
 
 /// Renders the page overview and applies a thumbnail click to the selection.
 pub fn show_page_overview(ui: &mut egui::Ui, state: &mut AppState) {
-    let selected_code = state.selection.code;
+    let selected_code = state.selection().code;
     let mut clicked = None;
 
     {
-        let doc = &state.document;
-        let Some(glyph_set) = doc.glyph_set(state.selection.glyph_set_id) else {
+        let doc = state.document();
+        let Some(glyph_set) = doc.glyph_set(state.selection().glyph_set_id) else {
             ui.weak("No glyph set selected.");
             return;
         };
-        let Some(page) = glyph_set.page_of_id(state.selection.page_id) else {
+        let Some(page) = glyph_set.page_of_id(state.selection().page_id) else {
             ui.weak("No page selected.");
             return;
         };

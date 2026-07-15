@@ -317,7 +317,7 @@ impl FontSpaceApp {
 
     /// Writes the document to `path` atomically and binds it, or reports the failure.
     fn write_to(&mut self, path: PathBuf) {
-        match fontspace_json::write_document(&path, &self.state.document) {
+        match fontspace_json::write_document(&path, self.state.document()) {
             Ok(()) => self.state.mark_saved(path),
             Err(err) => self.state.set_error(format!("Save failed: {err}")),
         }
