@@ -21,6 +21,11 @@ const DANGLING: Color32 = Color32::from_rgb(230, 110, 90);
 /// from the warm `SELECTED` outline on the active editor code.
 const RANGE: Color32 = Color32::from_rgb(150, 190, 255);
 
+/// The plural suffix for a count: `""` for one, `"s"` otherwise.
+fn plural_s(n: usize) -> &'static str {
+    if n == 1 { "" } else { "s" }
+}
+
 /// The inclusive slice of `ordered` codes between `a` and `b` (in either drag order),
 /// in display order (spec/12 §12.8). Empty when either endpoint is absent from the
 /// list, so a stale anchor never yields a bogus range.
@@ -87,18 +92,27 @@ pub fn show_page_overview(ui: &mut egui::Ui, state: &mut AppState) {
     let selected_code = state.selection().code;
     let range: Vec<u32> = state.page_glyph_selection().to_vec();
 
-    // Multi-glyph copy bar — shown only while a range is drag-selected, so the view is
-    // unchanged until you drag (keeping the default snapshot intact).
+    // Range action bar — shown only while a run is drag-selected, so the view is
+    // unchanged until you drag (keeping the default snapshot intact). Copy exports the
+    // run; Blank/Invert transform every stored glyph in it as one undo entry each.
     if !range.is_empty() {
         let n = range.len();
-        let plural = if n == 1 { "" } else { "s" };
-        ui.horizontal(|ui| {
+        let plural = plural_s(n);
+        ui.horizontal_wrapped(|ui| {
             ui.label(format!("{n} glyph{plural} selected"));
             if ui.button("Copy").clicked()
                 && let Some(fragment) = state.copy_page_selection()
             {
                 ui.ctx().copy_text(fragment);
                 state.set_status(format!("Copied {n} glyph{plural} to clipboard"));
+            }
+            if ui.button("Blank").clicked() {
+                let count = state.blank_page_selection();
+                state.set_status(format!("Blanked {count} glyph{}", plural_s(count)));
+            }
+            if ui.button("Invert").clicked() {
+                let count = state.invert_page_selection();
+                state.set_status(format!("Inverted {count} glyph{}", plural_s(count)));
             }
             if ui.button("Clear").clicked() {
                 state.clear_page_selection();
