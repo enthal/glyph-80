@@ -1,7 +1,7 @@
 //! Structured operation errors (spec/07, spec/14 §14.2). Every variant names the
 //! object context it can — glyph set, character set, page, code, coordinates.
 
-use fontspace_model::{CharacterSetId, GlyphSetId, GlyphSize, GuideId, PageId};
+use fontspace_model::{CharacterSetId, ExportConfigId, GlyphSetId, GlyphSize, GuideId, PageId};
 
 /// Why an operation could not be resolved or applied. Operations validate fully
 /// before mutating, so returning one of these means the document is unchanged
@@ -81,6 +81,9 @@ pub enum FontSpaceError {
 
     #[error("character set {0:?} not found")]
     CharacterSetIdNotFound(CharacterSetId),
+
+    #[error("export config {0:?} not found")]
+    ExportConfigNotFound(ExportConfigId),
 
     #[error("character set {character_set:?}: an entry with code {code:#06x} already exists")]
     DuplicateEntryCode {

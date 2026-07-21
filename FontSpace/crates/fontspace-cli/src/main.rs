@@ -25,9 +25,9 @@ use fontspace_model::{
     RandomIdGen, SequentialIdGen,
 };
 use fontspace_ops::{
-    ChangeSet, ExtractGlyphs, FontSpaceError, GlyphRef, GlyphSelector, PasteGlyphs, PixelEdit,
-    SetPixels, ShiftGlyphs, extract_glyphs, paste_glyphs, resolve_pages_in, set_pixels,
-    shift_glyphs,
+    AddExportConfig, ChangeSet, ExtractGlyphs, FontSpaceError, GlyphRef, GlyphSelector,
+    PasteGlyphs, PixelEdit, SetPixels, ShiftGlyphs, add_export_config, extract_glyphs,
+    paste_glyphs, resolve_pages_in, set_pixels, shift_glyphs,
 };
 use fontspace_render::{TextGridRequest, TextStringRequest, render_text_grid, render_text_string};
 
@@ -488,7 +488,9 @@ fn run(cli: Cli) -> Result<(), CliError> {
                     other => return Err(CliError::UnknownScan(other.to_string())),
                 }
             };
-            doc.export_configs.push(config);
+            // Insert through the domain op — the same invertible path the GUI uses —
+            // rather than pushing onto the vector directly (spec/07 §7.2).
+            add_export_config(&mut doc, &AddExportConfig { config })?;
             if cli.dry_run {
                 println!("dry-run: export config {name:?} not written");
             } else {

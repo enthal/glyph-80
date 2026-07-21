@@ -7,14 +7,17 @@ use fontspace_model::{
 };
 use proptest::prelude::*;
 
+use crate::apply_change_set;
+use crate::change_set::{ChangeSet, GlyphSetChange, ObjectChange};
 use crate::{
-    AddCharacterEntry, AddGuide, AddPage, ClearGlyphs, CopyGuideToPages, FontSpaceError,
-    FontSpaceWarning, GlyphRef, GlyphSelector, InvertGlyphs, MoveGuide, PageSelector, PixelEdit,
-    RecodeCharacterEntry, RemoveCharacterEntry, RemoveGuide, RemovePages, RenameGuide,
-    ReorderCharacterEntries, ReorderPages, SetGuideVisible, SetPixels, ShiftGlyphs,
-    add_character_entry, add_guide, add_page, clear_glyphs, copy_guide_to_pages, invert_glyphs,
-    move_guide, recode_character_entry, remove_character_entry, remove_guide, remove_pages,
-    rename_guide, reorder_character_entries, reorder_pages, set_guide_visible, set_pixels,
+    AddCharacterEntry, AddExportConfig, AddGlyphSet, AddGuide, AddPage, ClearGlyphs,
+    CopyGuideToPages, FontSpaceError, FontSpaceWarning, GlyphRef, GlyphSelector, InvertGlyphs,
+    MoveGuide, PageSelector, PixelEdit, RecodeCharacterEntry, RemoveCharacterEntry, RemoveGuide,
+    RemovePages, RenameGuide, ReorderCharacterEntries, ReorderPages, ReplaceExportConfig,
+    SetGuideVisible, SetPixels, ShiftGlyphs, add_character_entry, add_export_config, add_glyph_set,
+    add_guide, add_page, clear_glyphs, copy_guide_to_pages, invert_glyphs, move_guide,
+    recode_character_entry, remove_character_entry, remove_guide, remove_pages, rename_guide,
+    reorder_character_entries, reorder_pages, replace_export_config, set_guide_visible, set_pixels,
     shift_glyphs, undo,
 };
 
@@ -1203,6 +1206,187 @@ fn recode_from_missing_code_errors() {
         err,
         FontSpaceError::EntryCodeNotFound { code: 0x99, .. }
     ));
+}
+
+// --- Top-level object ops: add glyph set, add/replace export config (spec/07 §7.2) ---
+
+/// A minimal well-formed export config over `glyph_set`, for the object-op tests. Not a
+/// scan preset (that lives in `fontspace-export`); just enough shape to insert and
+/// round-trip through undo.
+fn sample_export_config(
+    ids: &mut SequentialIdGen,
+    name: &str,
+    glyph_set: &GlyphSet,
+) -> fontspace_model::ExportConfig {
+    use fontspace_model::{
+        AddressBitSource, AddressMap, CoordinateExpr, DataMap, ExportComponentId, ExportConfig,
+        ExportConfigId, ExportSourceSpec, OutputBitSource, OutputFormatConfig,
+    };
+    ExportConfig {
+        id: ExportConfigId::new(ids),
+        name: name.into(),
+        description: String::new(),
+        source: ExportSourceSpec {
+            glyph_set_id: glyph_set.id,
+            pages: glyph_set.pages.iter().map(|page| page.id).collect(),
+        },
+        address_map: AddressMap {
+            id: ExportComponentId::new(ids),
+            name: "addr".into(),
+            address_bits: vec![AddressBitSource::CodeBit(0)],
+        },
+        data_map: DataMap {
+            id: ExportComponentId::new(ids),
+            name: "data".into(),
+            output_bits: vec![OutputBitSource::Pixel {
+                x: CoordinateExpr::Constant(0),
+                y: CoordinateExpr::AddressedY,
+            }],
+        },
+        output_format: OutputFormatConfig::RawBinary,
+    }
+}
+
+#[test]
+fn add_glyph_set_appends_with_a_page_and_undo_removes() {
+    let mut f = fixture();
+    let before = f.doc.glyph_sets.len();
+    let change_set = add_glyph_set(
+        &mut f.doc,
+        &AddGlyphSet {
+            name: "Terminal 8x16".into(),
+            description: String::new(),
+            glyph_size: GlyphSize::new(8, 16),
+            character_set_id: f.character_set,
+            initial_page_name: Some("Regular".into()),
+        },
+        &mut f.ids,
+    )
+    .unwrap();
+    assert_eq!(f.doc.glyph_sets.len(), before + 1);
+    let added = f.doc.glyph_sets.last().unwrap();
+    assert_eq!(added.name, "Terminal 8x16");
+    assert_eq!(added.glyph_size, GlyphSize::new(8, 16));
+    assert_eq!(added.pages.len(), 1, "created with its initial page");
+
+    undo(&mut f.doc, &change_set).unwrap();
+    assert_eq!(f.doc.glyph_sets.len(), before);
+}
+
+#[test]
+fn add_glyph_set_rejects_a_missing_character_set() {
+    let mut f = fixture();
+    let bogus = CharacterSet::new(&mut f.ids, "ghost", "").id;
+    let err = add_glyph_set(
+        &mut f.doc,
+        &AddGlyphSet {
+            name: "x".into(),
+            description: String::new(),
+            glyph_size: GlyphSize::new(8, 8),
+            character_set_id: bogus,
+            initial_page_name: None,
+        },
+        &mut f.ids,
+    )
+    .unwrap_err();
+    assert!(matches!(err, FontSpaceError::CharacterSetIdNotFound(id) if id == bogus));
+    // Atomic: nothing was added.
+    assert_eq!(f.doc.glyph_sets.len(), 1);
+}
+
+#[test]
+fn add_export_config_appends_and_undo_removes() {
+    let mut f = fixture();
+    let config = sample_export_config(&mut f.ids, "ROM", &f.doc.glyph_sets[0]);
+    let id = config.id;
+    let change_set = add_export_config(&mut f.doc, &AddExportConfig { config }).unwrap();
+    assert_eq!(f.doc.export_configs.len(), 1);
+    assert_eq!(f.doc.export_configs[0].id, id);
+
+    undo(&mut f.doc, &change_set).unwrap();
+    assert!(f.doc.export_configs.is_empty());
+}
+
+#[test]
+fn replace_export_config_swaps_in_place_and_undo_restores() {
+    let mut f = fixture();
+    let original = sample_export_config(&mut f.ids, "ROM", &f.doc.glyph_sets[0]);
+    let id = original.id;
+    add_export_config(
+        &mut f.doc,
+        &AddExportConfig {
+            config: original.clone(),
+        },
+    )
+    .unwrap();
+
+    // Edit the name, keeping the same id, and replace.
+    let mut edited = original.clone();
+    edited.name = "ROM v2".into();
+    let change_set =
+        replace_export_config(&mut f.doc, &ReplaceExportConfig { config: edited }).unwrap();
+    assert_eq!(f.doc.export_configs.len(), 1, "replace, not append");
+    assert_eq!(f.doc.export_configs[0].name, "ROM v2");
+
+    undo(&mut f.doc, &change_set).unwrap();
+    assert_eq!(f.doc.export_configs[0].id, id);
+    assert_eq!(f.doc.export_configs[0].name, "ROM");
+}
+
+#[test]
+fn glyph_set_remove_and_reinsert_restores_position() {
+    // The strict-layer inversion tests above run on ≤1-element vectors, so they can't
+    // catch a re-insert that ignores `index` and appends. Build a 3-set document and
+    // remove/undo a *non-tail* set (a change set of the shape `remove_glyph_set` would
+    // emit): undo must restore its original position exactly, not push it to the end.
+    let mut f = fixture();
+    for name in ["second", "third"] {
+        add_glyph_set(
+            &mut f.doc,
+            &AddGlyphSet {
+                name: name.into(),
+                description: String::new(),
+                glyph_size: GlyphSize::new(8, 8),
+                character_set_id: f.character_set,
+                initial_page_name: None,
+            },
+            &mut f.ids,
+        )
+        .unwrap();
+    }
+    let names_before: Vec<_> = f.doc.glyph_sets.iter().map(|gs| gs.name.clone()).collect();
+    assert_eq!(names_before.len(), 3);
+
+    let middle = f.doc.glyph_sets[1].clone();
+    let remove = ChangeSet {
+        object_changes: vec![ObjectChange::GlyphSetChanged(Box::new(GlyphSetChange {
+            index: 1,
+            before: Some(middle),
+            after: None,
+        }))],
+        warnings: Vec::new(),
+    };
+    apply_change_set(&mut f.doc, &remove).unwrap();
+    assert_eq!(f.doc.glyph_sets.len(), 2);
+    assert_eq!(
+        f.doc.glyph_sets[1].name, "third",
+        "the middle set was removed"
+    );
+
+    undo(&mut f.doc, &remove).unwrap();
+    let names_after: Vec<_> = f.doc.glyph_sets.iter().map(|gs| gs.name.clone()).collect();
+    assert_eq!(names_after, names_before, "re-insert restores exact order");
+}
+
+#[test]
+fn replace_export_config_rejects_an_unknown_id() {
+    let mut f = fixture();
+    // Never added, so its id is not present.
+    let orphan = sample_export_config(&mut f.ids, "ghost", &f.doc.glyph_sets[0]);
+    let orphan_id = orphan.id;
+    let err =
+        replace_export_config(&mut f.doc, &ReplaceExportConfig { config: orphan }).unwrap_err();
+    assert!(matches!(err, FontSpaceError::ExportConfigNotFound(id) if id == orphan_id));
 }
 
 // --- Property test: every operation's change set inverts exactly (spec/07 §7.7) ---
