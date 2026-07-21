@@ -125,7 +125,7 @@ pub struct AppState {
     /// (`OverflowPolicy::Wrap`) rather than discarding them (spec/12 §12.3). UI state;
     /// default off, matching the CLI `shift` default. Wrap rotates rows/columns.
     pub shift_wrap: bool,
-    /// The export config the Export Configuration view edits (spec/12 §12.11), or
+    /// The export config the Export Configuration view edits (spec/12 §12.12), or
     /// `None` when none is selected. UI state; set when one is created or picked in the
     /// document browser, cleared if it no longer resolves.
     selected_export_config: Option<ExportConfigId>,
@@ -584,7 +584,7 @@ impl AppState {
         }
     }
 
-    // --- Creating top-level objects (spec/07 §7.2, spec/12 §12.11). The menu gathers
+    // --- Creating top-level objects (spec/07 §7.2, spec/12 §12.12). The menu gathers
     // the parameters; these build and invoke the domain op, record it for undo, and
     // point the UI at the result. ---
 
@@ -627,17 +627,20 @@ impl AppState {
     /// with an error if no glyph set is selected.
     pub fn add_export_config(&mut self, name: String) {
         let code_bits = self.default_code_bits();
-        let Some(glyph_set) = self
-            .active
-            .content
-            .glyph_set(self.active.selection.glyph_set_id)
-            .cloned()
-        else {
-            self.set_error("Select a glyph set before adding an export config");
-            return;
+        // `content` and `ids` are disjoint fields, so the glyph-set borrow can coexist
+        // with `self.ids.as_mut()` — no need to clone the whole set to build the config.
+        let config = {
+            let Some(glyph_set) = self
+                .active
+                .content
+                .glyph_set(self.active.selection.glyph_set_id)
+            else {
+                self.set_error("Select a glyph set before adding an export config");
+                return;
+            };
+            let pages: Vec<PageId> = glyph_set.pages.iter().map(|page| page.id).collect();
+            row_scan_config(self.ids.as_mut(), name, glyph_set, pages, code_bits)
         };
-        let pages: Vec<PageId> = glyph_set.pages.iter().map(|page| page.id).collect();
-        let config = row_scan_config(self.ids.as_mut(), name, &glyph_set, pages, code_bits);
         let id = config.id;
         match add_export_config(&mut self.active.content, &AddExportConfig { config }) {
             Ok(change_set) => {
@@ -668,7 +671,7 @@ impl AppState {
         bits.clamp(1, 24) as u8
     }
 
-    /// The export config the Export Configuration view edits (spec/12 §12.11), or `None`
+    /// The export config the Export Configuration view edits (spec/12 §12.12), or `None`
     /// when none is selected or the selection no longer resolves.
     pub fn selected_export_config(&self) -> Option<ExportConfigId> {
         self.selected_export_config.filter(|id| {

@@ -26,12 +26,12 @@ pub struct FontSpaceApp {
     /// actually changes. Sending one every frame would request a repaint every frame
     /// and the UI would never settle (breaking the snapshot harness's fixed-point run).
     last_title: String,
-    /// The in-progress "Add Glyph Set" dialog, when open (spec/12 §12.11). Transient UI
+    /// The in-progress "Add Glyph Set" dialog, when open (spec/12 §12.12). Transient UI
     /// state, never persisted; `None` means the dialog is closed.
     add_glyph_set_form: Option<GlyphSetForm>,
 }
 
-/// The inputs of the "Add Glyph Set" dialog (spec/12 §12.11): a name, a geometry, and
+/// The inputs of the "Add Glyph Set" dialog (spec/12 §12.12): a name, a geometry, and
 /// the character set the new set references.
 struct GlyphSetForm {
     name: String,
@@ -169,7 +169,7 @@ impl FontSpaceApp {
                         ui.close();
                     }
                 });
-                // Create top-level document objects (spec/12 §12.11). The full menu
+                // Create top-level document objects (spec/12 §12.12). The full menu
                 // taxonomy (File · … · Glyph · Page · Export · …) lands with the M4 menu
                 // system; until then these creators live under one "Insert" menu.
                 ui.menu_button("Insert", |ui| {
@@ -274,13 +274,13 @@ impl FontSpaceApp {
     }
 
     /// Adds a row-scan export config sourced from the selected glyph set, named for its
-    /// position (spec/12 §12.11). The Export Configuration view then refines it.
+    /// position (spec/12 §12.12). The Export Configuration view then refines it.
     fn action_add_export_config(&mut self) {
         let ordinal = self.state.document().export_configs.len() + 1;
         self.state.add_export_config(format!("Export {ordinal}"));
     }
 
-    /// The "Add Glyph Set" dialog (spec/12 §12.11): name, geometry, and character-set
+    /// The "Add Glyph Set" dialog (spec/12 §12.12): name, geometry, and character-set
     /// picker. Only present when armed; the buttons set local flags so `self` is free to
     /// mutate after the modal closure. "Add" invokes the `add_glyph_set` op (one undo
     /// entry) and selects the new page.
