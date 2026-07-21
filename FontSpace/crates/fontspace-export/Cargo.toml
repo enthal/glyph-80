@@ -1,0 +1,12 @@
+[package]
+name = "fontspace-export"
+description = "Strict 1:1 ROM/programmer export for FontSpace (spec/10)."
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+fontspace-model = { path = "../fontspace-model" }
+thiserror = "2"

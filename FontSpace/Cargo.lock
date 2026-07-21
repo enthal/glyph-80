@@ -1346,6 +1346,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "fontspace-export"
+version = "0.0.0"
+dependencies = [
+ "fontspace-model",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "fontspace-json"
 version = "0.0.0"
 dependencies = [
