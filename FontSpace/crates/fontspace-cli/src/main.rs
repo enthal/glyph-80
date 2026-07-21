@@ -221,6 +221,12 @@ enum CliError {
         #[source]
         source: std::io::Error,
     },
+    #[error("writing {path}: {source}")]
+    WriteFile {
+        path: String,
+        #[source]
+        source: std::io::Error,
+    },
     #[error("{0} already exists (refusing to overwrite; delete it first)")]
     FileExists(String),
     #[error("--page must match exactly one page, but matched {count}")]
@@ -521,7 +527,10 @@ fn run(cli: Cli) -> Result<(), CliError> {
             } else {
                 let image = generate_image(glyph_set, export_config, &limits)?;
                 let bytes = encode_raw_binary(&image, summary.data_bits);
-                fs::write(&output, &bytes)?;
+                fs::write(&output, &bytes).map_err(|source| CliError::WriteFile {
+                    path: output.display().to_string(),
+                    source,
+                })?;
                 println!("wrote {} bytes to {}", bytes.len(), output.display());
             }
             Ok(())
