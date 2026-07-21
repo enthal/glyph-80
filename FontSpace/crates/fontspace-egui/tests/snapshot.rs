@@ -17,6 +17,7 @@ use egui_kittest::{Harness, SnapshotOptions};
 use fontspace_egui::charset_view::show_character_set;
 use fontspace_egui::document_browser::show_document_browser;
 use fontspace_egui::editor::show_glyph_editor;
+use fontspace_egui::export_view::show_export_configuration;
 use fontspace_egui::page_overview::show_page_overview;
 use fontspace_egui::text_preview::show_text_preview;
 use fontspace_egui::{AppState, FontSpaceApp, GuardedIntent};
@@ -101,6 +102,20 @@ fn page_overview() {
         .build_ui(move |ui| show_page_overview(ui, &mut state));
     harness.run();
     harness.snapshot_options("page_overview", &options());
+}
+
+#[test]
+fn export_configuration() {
+    // Add a row-scan export config sourced from the starter glyph set, so the view shows
+    // the populated form plus its live 1:1 validation summary (spec/12 §12.11).
+    let mut state = state();
+    state.add_export_config("Text ROM".to_string());
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(380.0, 420.0))
+        .wgpu()
+        .build_ui(move |ui| show_export_configuration(ui, &mut state));
+    harness.run();
+    harness.snapshot_options("export_configuration", &options());
 }
 
 #[test]

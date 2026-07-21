@@ -8,26 +8,29 @@ use egui_tiles::{Tile, Tree};
 
 /// One tiled view. Every major view in spec/12 §12.1 is a pane kind; the ones that
 /// only make sense with multiple documents (Character Across Pages/Files) or later
-/// milestones (Export views) arrive with those features. This Milestone-2 shell
-/// covers the single-document editor set.
+/// milestones (the Export **Preview** / raw-memory view) arrive with those features.
+/// This shell covers the single-document editor set plus the Export Configuration
+/// editor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Pane {
     GlyphEditor,
     CharacterSet,
     PageOverview,
     TextPreview,
+    ExportConfiguration,
     DocumentBrowser,
     Inspector,
 }
 
 impl Pane {
     /// The panes the default layout is built from, in a stable order.
-    pub const ALL: [Pane; 6] = [
+    pub const ALL: [Pane; 7] = [
         Pane::DocumentBrowser,
         Pane::GlyphEditor,
         Pane::CharacterSet,
         Pane::PageOverview,
         Pane::TextPreview,
+        Pane::ExportConfiguration,
         Pane::Inspector,
     ];
 
@@ -38,6 +41,7 @@ impl Pane {
             Pane::CharacterSet => "Character Set",
             Pane::PageOverview => "Page Overview",
             Pane::TextPreview => "Text Preview",
+            Pane::ExportConfiguration => "Export Configuration",
             Pane::DocumentBrowser => "Documents",
             Pane::Inspector => "Inspector",
         }
@@ -45,14 +49,14 @@ impl Pane {
 }
 
 /// Builds the opinionated default layout (spec/12 §12.1): a document browser on the
-/// left, the glyph editor dominant in the center above a tab strip of Character Set
-/// / Page Overview / Text Preview, and the inspector on the right.
+/// left, the glyph editor dominant in the center above a tab strip of Character Set /
+/// Page Overview / Text Preview / Export Configuration, and the inspector on the right.
 ///
 /// ```text
 /// +-----------+-----------------------------+-----------+
 /// | Documents | Glyph Editor                | Inspector |
 /// |           +-----------------------------+           |
-/// |           | Char Set / Pages / Preview  |           |
+/// |           | Char / Pages / Preview / Ex |           |
 /// +-----------+-----------------------------+-----------+
 /// ```
 pub fn default_tree() -> Tree<Pane> {
@@ -62,7 +66,13 @@ pub fn default_tree() -> Tree<Pane> {
     let character_set = tiles.insert_pane(Pane::CharacterSet);
     let page_overview = tiles.insert_pane(Pane::PageOverview);
     let text_preview = tiles.insert_pane(Pane::TextPreview);
-    let tabs = tiles.insert_tab_tile(vec![character_set, page_overview, text_preview]);
+    let export_config = tiles.insert_pane(Pane::ExportConfiguration);
+    let tabs = tiles.insert_tab_tile(vec![
+        character_set,
+        page_overview,
+        text_preview,
+        export_config,
+    ]);
     let center = tiles.insert_vertical_tile(vec![editor, tabs]);
 
     let browser = tiles.insert_pane(Pane::DocumentBrowser);

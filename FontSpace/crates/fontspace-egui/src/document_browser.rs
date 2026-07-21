@@ -7,7 +7,7 @@
 //! walks it. Create/rename/duplicate/delete/reorder and drag-between-files arrive in
 //! later slices.
 
-use fontspace_model::{FontSpace, GlyphSetId, PageId};
+use fontspace_model::{ExportConfigId, FontSpace, GlyphSetId, PageId};
 
 use crate::state::AppState;
 use crate::workspace::DocumentId;
@@ -27,13 +27,21 @@ pub struct PageNode {
     pub name: String,
 }
 
+/// One export config in the browser: its id and name. Selectable — clicking it points
+/// the Export Configuration view at it (spec/12 §12.2).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExportConfigNode {
+    pub id: ExportConfigId,
+    pub name: String,
+}
+
 /// The browser's ordered view of a document's objects (spec/12 §12.2). Character sets
-/// and export configs are shown by name; glyph sets carry their pages.
+/// are shown by name; glyph sets carry their pages; export configs are selectable.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BrowserModel {
     pub character_sets: Vec<String>,
     pub glyph_sets: Vec<GlyphSetNode>,
-    pub export_configs: Vec<String>,
+    pub export_configs: Vec<ExportConfigNode>,
 }
 
 /// Builds the browser tree for `document` in document order (spec/12 §12.2).
@@ -63,7 +71,10 @@ pub fn browser_model(document: &FontSpace) -> BrowserModel {
         export_configs: document
             .export_configs
             .iter()
-            .map(|ec| ec.name.clone())
+            .map(|ec| ExportConfigNode {
+                id: ec.id,
+                name: ec.name.clone(),
+            })
             .collect(),
     }
 }
@@ -82,6 +93,7 @@ struct DocumentEntry {
 /// page click: switch to that file (if it isn't active) and select the page.
 pub fn show_document_browser(ui: &mut egui::Ui, state: &mut AppState) {
     let selection = state.selection();
+    let selected_export = state.selected_export_config();
     let documents: Vec<DocumentEntry> = state
         .open_documents()
         .map(|(document, active)| DocumentEntry {
@@ -93,6 +105,7 @@ pub fn show_document_browser(ui: &mut egui::Ui, state: &mut AppState) {
         .collect();
 
     let mut clicked: Option<(DocumentId, GlyphSetId, PageId)> = None;
+    let mut clicked_export: Option<(DocumentId, ExportConfigId)> = None;
     // `ui.id()` is seeded with this tile's id, so salting from it keeps every widget id
     // unique even when the browser is open in two tiles at once (spec/12 §12.1).
     egui::ScrollArea::vertical()
@@ -108,7 +121,14 @@ pub fn show_document_browser(ui: &mut egui::Ui, state: &mut AppState) {
                     .id_salt(ui.id().with(document.id.0))
                     .default_open(document.active)
                     .show(ui, |ui| {
-                        show_document_tree(ui, document, selection, &mut clicked);
+                        show_document_tree(
+                            ui,
+                            document,
+                            selection,
+                            selected_export,
+                            &mut clicked,
+                            &mut clicked_export,
+                        );
                     });
             }
         });
@@ -116,6 +136,10 @@ pub fn show_document_browser(ui: &mut egui::Ui, state: &mut AppState) {
     if let Some((document_id, glyph_set_id, page_id)) = clicked {
         state.switch_to(document_id);
         state.select_page(glyph_set_id, page_id);
+    }
+    if let Some((document_id, export_config_id)) = clicked_export {
+        state.switch_to(document_id);
+        state.select_export_config(export_config_id);
     }
 }
 
@@ -126,7 +150,9 @@ fn show_document_tree(
     ui: &mut egui::Ui,
     document: &DocumentEntry,
     selection: crate::state::Selection,
+    selected_export: Option<ExportConfigId>,
     clicked: &mut Option<(DocumentId, GlyphSetId, PageId)>,
+    clicked_export: &mut Option<(DocumentId, ExportConfigId)>,
 ) {
     let model = &document.model;
     section(ui, "Character Sets", "character_sets", |ui| {
@@ -158,7 +184,15 @@ fn show_document_tree(
     });
 
     section(ui, "Export Configurations", "export_configs", |ui| {
-        names(ui, &model.export_configs);
+        if model.export_configs.is_empty() {
+            ui.weak("(none)");
+        }
+        for config in &model.export_configs {
+            let selected = document.active && selected_export == Some(config.id);
+            if ui.selectable_label(selected, &config.name).clicked() {
+                *clicked_export = Some((document.id, config.id));
+            }
+        }
     });
 }
 
@@ -199,6 +233,19 @@ mod tests {
         assert_eq!(model.glyph_sets[0].pages.len(), 1);
         assert_eq!(model.glyph_sets[0].pages[0].name, "Regular");
         assert!(model.export_configs.is_empty());
+    }
+
+    #[test]
+    fn model_carries_export_configs_as_selectable_nodes() {
+        let mut state = AppState::with_ids(Box::new(SequentialIdGen::new()));
+        state.add_export_config("Text ROM".to_string());
+        let model = browser_model(state.document());
+        assert_eq!(model.export_configs.len(), 1);
+        assert_eq!(model.export_configs[0].name, "Text ROM");
+        assert_eq!(
+            model.export_configs[0].id,
+            state.selected_export_config().unwrap()
+        );
     }
 
     #[test]
