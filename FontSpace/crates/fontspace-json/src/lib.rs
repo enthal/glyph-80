@@ -23,9 +23,11 @@ mod storage;
 use std::collections::HashMap;
 
 use fontspace_model::{
-    CURRENT_FORMAT_VERSION, CharacterEntry, CharacterSet, CharacterSetId, ExportConfig,
-    ExportConfigId, FontSpace, FontSpaceId, FontSpaceMetadata, Glyph, GlyphPage, GlyphSet,
-    GlyphSetId, GlyphSize, Guide, GuideAxis, GuideId, Limits, PageId, ValidationWarning,
+    AddressBitSource, AddressMap, CURRENT_FORMAT_VERSION, CharacterEntry, CharacterSet,
+    CharacterSetId, CoordinateExpr, DataMap, ExportComponentId, ExportConfig, ExportConfigId,
+    ExportSourceSpec, FontSpace, FontSpaceId, FontSpaceMetadata, Glyph, GlyphPage, GlyphSet,
+    GlyphSetId, GlyphSize, Guide, GuideAxis, GuideId, Limits, OutputBitSource, OutputFormatConfig,
+    PageId, ValidationWarning,
 };
 use uuid::Uuid;
 
@@ -203,6 +205,77 @@ fn to_stored_export_config(export_config: &ExportConfig) -> StoredExportConfig {
         id: uuid_string(export_config.id.as_uuid()),
         name: export_config.name.clone(),
         description: export_config.description.clone(),
+        source: StoredExportSource {
+            glyph_set_id: uuid_string(export_config.source.glyph_set_id.as_uuid()),
+            pages: export_config
+                .source
+                .pages
+                .iter()
+                .map(|page| uuid_string(page.as_uuid()))
+                .collect(),
+        },
+        address_map: StoredAddressMap {
+            id: uuid_string(export_config.address_map.id.as_uuid()),
+            name: export_config.address_map.name.clone(),
+            address_bits: export_config
+                .address_map
+                .address_bits
+                .iter()
+                .map(to_stored_address_bit)
+                .collect(),
+        },
+        data_map: StoredDataMap {
+            id: uuid_string(export_config.data_map.id.as_uuid()),
+            name: export_config.data_map.name.clone(),
+            output_bits: export_config
+                .data_map
+                .output_bits
+                .iter()
+                .map(to_stored_output_bit)
+                .collect(),
+        },
+        output_format: match &export_config.output_format {
+            OutputFormatConfig::RawBinary => StoredOutputFormat::RawBinary,
+            OutputFormatConfig::Unsupported { name } => {
+                StoredOutputFormat::Unsupported { name: name.clone() }
+            }
+        },
+    }
+}
+
+fn to_stored_address_bit(bit: &AddressBitSource) -> StoredAddressBit {
+    match bit {
+        AddressBitSource::Constant(v) => StoredAddressBit::Constant(*v),
+        AddressBitSource::CodeBit(n) => StoredAddressBit::Code(*n),
+        AddressBitSource::PageBit(n) => StoredAddressBit::Page(*n),
+        AddressBitSource::PixelXBit(n) => StoredAddressBit::PixelX(*n),
+        AddressBitSource::PixelYBit(n) => StoredAddressBit::PixelY(*n),
+        AddressBitSource::Inverted(inner) => {
+            StoredAddressBit::Inverted(Box::new(to_stored_address_bit(inner)))
+        }
+    }
+}
+
+fn to_stored_output_bit(bit: &OutputBitSource) -> StoredOutputBit {
+    match bit {
+        OutputBitSource::Constant(v) => StoredOutputBit::Constant(*v),
+        OutputBitSource::Pixel { x, y } => StoredOutputBit::Pixel {
+            x: to_stored_coord(x),
+            y: to_stored_coord(y),
+        },
+        OutputBitSource::Inverted(inner) => {
+            StoredOutputBit::Inverted(Box::new(to_stored_output_bit(inner)))
+        }
+    }
+}
+
+fn to_stored_coord(coord: &CoordinateExpr) -> StoredCoordExpr {
+    match coord {
+        CoordinateExpr::Constant(v) => StoredCoordExpr::Constant(*v),
+        CoordinateExpr::AddressedX => StoredCoordExpr::AddressedX,
+        CoordinateExpr::AddressedY => StoredCoordExpr::AddressedY,
+        CoordinateExpr::AddressedXPlus(v) => StoredCoordExpr::AddressedXPlus(*v),
+        CoordinateExpr::AddressedYPlus(v) => StoredCoordExpr::AddressedYPlus(*v),
     }
 }
 
@@ -382,12 +455,83 @@ fn from_stored_export_config(stored: StoredExportConfig) -> Result<ExportConfig,
         id,
         name,
         description,
+        source,
+        address_map,
+        data_map,
+        output_format,
     } = stored;
+    let context = format!("export config {name:?}");
     Ok(ExportConfig {
-        id: ExportConfigId(parse_uuid(&format!("export config {name:?}"), &id)?),
+        id: ExportConfigId(parse_uuid(&context, &id)?),
+        source: ExportSourceSpec {
+            glyph_set_id: GlyphSetId(parse_uuid(&context, &source.glyph_set_id)?),
+            pages: source
+                .pages
+                .iter()
+                .map(|page| Ok(PageId(parse_uuid(&context, page)?)))
+                .collect::<Result<Vec<_>, JsonError>>()?,
+        },
+        address_map: AddressMap {
+            id: ExportComponentId(parse_uuid(&context, &address_map.id)?),
+            name: address_map.name,
+            address_bits: address_map
+                .address_bits
+                .into_iter()
+                .map(from_stored_address_bit)
+                .collect(),
+        },
+        data_map: DataMap {
+            id: ExportComponentId(parse_uuid(&context, &data_map.id)?),
+            name: data_map.name,
+            output_bits: data_map
+                .output_bits
+                .into_iter()
+                .map(from_stored_output_bit)
+                .collect(),
+        },
+        output_format: match output_format {
+            StoredOutputFormat::RawBinary => OutputFormatConfig::RawBinary,
+            StoredOutputFormat::Unsupported { name } => OutputFormatConfig::Unsupported { name },
+        },
         name,
         description,
     })
+}
+
+fn from_stored_address_bit(bit: StoredAddressBit) -> AddressBitSource {
+    match bit {
+        StoredAddressBit::Constant(v) => AddressBitSource::Constant(v),
+        StoredAddressBit::Code(n) => AddressBitSource::CodeBit(n),
+        StoredAddressBit::Page(n) => AddressBitSource::PageBit(n),
+        StoredAddressBit::PixelX(n) => AddressBitSource::PixelXBit(n),
+        StoredAddressBit::PixelY(n) => AddressBitSource::PixelYBit(n),
+        StoredAddressBit::Inverted(inner) => {
+            AddressBitSource::Inverted(Box::new(from_stored_address_bit(*inner)))
+        }
+    }
+}
+
+fn from_stored_output_bit(bit: StoredOutputBit) -> OutputBitSource {
+    match bit {
+        StoredOutputBit::Constant(v) => OutputBitSource::Constant(v),
+        StoredOutputBit::Pixel { x, y } => OutputBitSource::Pixel {
+            x: from_stored_coord(x),
+            y: from_stored_coord(y),
+        },
+        StoredOutputBit::Inverted(inner) => {
+            OutputBitSource::Inverted(Box::new(from_stored_output_bit(*inner)))
+        }
+    }
+}
+
+fn from_stored_coord(coord: StoredCoordExpr) -> CoordinateExpr {
+    match coord {
+        StoredCoordExpr::Constant(v) => CoordinateExpr::Constant(v),
+        StoredCoordExpr::AddressedX => CoordinateExpr::AddressedX,
+        StoredCoordExpr::AddressedY => CoordinateExpr::AddressedY,
+        StoredCoordExpr::AddressedXPlus(v) => CoordinateExpr::AddressedXPlus(v),
+        StoredCoordExpr::AddressedYPlus(v) => CoordinateExpr::AddressedYPlus(v),
+    }
 }
 
 fn parse_uuid(context: &str, value: &str) -> Result<Uuid, JsonError> {

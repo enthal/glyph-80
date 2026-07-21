@@ -29,7 +29,10 @@ pub use bitmap::{
 pub use character_set::{CharacterEntry, CharacterSet};
 pub use color::Rgba;
 pub use document::{CURRENT_FORMAT_VERSION, FontSpace, FontSpaceMetadata};
-pub use export_config::ExportConfig;
+pub use export_config::{
+    AddressBitSource, AddressMap, CoordinateExpr, DataMap, ExportConfig, ExportSourceSpec,
+    OutputBitSource, OutputFormatConfig,
+};
 pub use fragment::{FontSpaceFragment, FragmentGlyph, GlyphFragment};
 pub use geometry::{GlyphSize, GlyphSizeError, GuideAxis};
 pub use glyph_set::{Glyph, GlyphPage, GlyphSet, Guide};

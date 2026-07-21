@@ -99,7 +99,7 @@ Crate: `fontspace-export`.
 
 Steps:
 
-- [ ] Export config types (full schema persisted; `transforms` required empty) ([spec/10](spec/10-rom-export.md)).
+- [ ] Export config types (full schema persisted; `transforms` required empty) ([spec/10](spec/10-rom-export.md)). _In progress:_ the strict-1:1 persisted schema — `ExportConfig` grown in place with `source`/`address_map`/`data_map`/`output_format`, the `AddressBitSource`/`OutputBitSource`/`CoordinateExpr` enums, canonical round-trip JSON + a golden file, and export-component-id uniqueness validation ([#53](https://github.com/enthal/glyph-80/pull/53)). Still to come: the geometry-pipeline fields (`transforms`/`packing`/`memory_image`, §10.8), which extend the struct later via serde defaults.
 - [ ] **Code-addressed** address/data maps; `evaluate_output_word`; logical memory-image generation.
 - [ ] **1:1 coverage validator** (partition check, no address/data overlap, width match) with the diagnostics in [spec/14](spec/14-validation-and-errors.md). *Golden byte-exact image tests; property test: validated config never reads OOB.*
 - [ ] `RawBinary` encoder; CLI `export` + `validate-export`; MCP export tools.

@@ -97,10 +97,85 @@ pub(crate) struct StoredGlyph {
     pub pixels: Vec<String>,
 }
 
-/// Provisional (spec/10 lands at Milestone 5); mirrors the model stub.
+/// The persisted export config (spec/10 §10.1), strict-1:1 subset (Milestone 5): the
+/// source binding, address/data maps, and output format. Field order is on-disk order.
 #[derive(Serialize, Deserialize)]
 pub(crate) struct StoredExportConfig {
     pub id: String,
     pub name: String,
     pub description: String,
+    pub source: StoredExportSource,
+    pub address_map: StoredAddressMap,
+    pub data_map: StoredDataMap,
+    pub output_format: StoredOutputFormat,
+}
+
+#[derive(Serialize, Deserialize)]
+pub(crate) struct StoredExportSource {
+    pub glyph_set_id: String,
+    #[serde(default)]
+    pub pages: Vec<String>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub(crate) struct StoredAddressMap {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub address_bits: Vec<StoredAddressBit>,
+}
+
+/// One address line's source (spec/10 §10.4). Externally tagged, snake_case, e.g.
+/// `{"code": 5}`, `{"pixel_y": 0}`, `{"inverted": {"code": 3}}`.
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum StoredAddressBit {
+    Constant(bool),
+    Code(u8),
+    Page(u8),
+    PixelX(u8),
+    PixelY(u8),
+    Inverted(Box<StoredAddressBit>),
+}
+
+#[derive(Serialize, Deserialize)]
+pub(crate) struct StoredDataMap {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub output_bits: Vec<StoredOutputBit>,
+}
+
+/// One data bit's source (spec/10 §10.5), e.g. `{"pixel": {"x": "addressed_x", "y":
+/// "addressed_y"}}`, `{"constant": false}`, `{"inverted": {...}}`.
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum StoredOutputBit {
+    Constant(bool),
+    Pixel {
+        x: StoredCoordExpr,
+        y: StoredCoordExpr,
+    },
+    Inverted(Box<StoredOutputBit>),
+}
+
+/// A pixel-coordinate expression (spec/10 §10.5): unit variants as strings
+/// (`"addressed_x"`), data variants tagged (`{"constant": 3}`, `{"addressed_x_plus": 1}`).
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum StoredCoordExpr {
+    Constant(i32),
+    AddressedX,
+    AddressedY,
+    AddressedXPlus(i32),
+    AddressedYPlus(i32),
+}
+
+/// The programmer-file encoding (spec/10 §10.9): `"raw_binary"` or `{"unsupported":
+/// {"name": "…"}}`.
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum StoredOutputFormat {
+    RawBinary,
+    Unsupported { name: String },
 }

@@ -13,8 +13,8 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::{
-    CharacterSetId, ExportConfigId, FontSpace, GlyphSetId, GlyphSize, GlyphSizeError, GuideId,
-    Limits, PageId, document::CURRENT_FORMAT_VERSION,
+    CharacterSetId, ExportComponentId, ExportConfigId, FontSpace, GlyphSetId, GlyphSize,
+    GlyphSizeError, GuideId, Limits, PageId, document::CURRENT_FORMAT_VERSION,
 };
 
 /// The outcome of validating a document: hard errors and tolerated warnings.
@@ -46,6 +46,8 @@ pub enum ValidationError {
     DuplicateGuideId(GuideId),
     #[error("duplicate export config id {0:?}")]
     DuplicateExportConfigId(ExportConfigId),
+    #[error("duplicate export component id {0:?}")]
+    DuplicateExportComponentId(ExportComponentId),
     #[error("glyph set {glyph_set:?} references unknown character set {character_set:?}")]
     UnknownCharacterSet {
         glyph_set: GlyphSetId,
@@ -142,11 +144,11 @@ impl FontSpace {
     /// Validate the whole document against the structural invariants and `limits`.
     /// Never mutates; collects every problem rather than failing on the first.
     ///
-    /// Two §14.1 clauses are structurally vacuous or deferred here: a `Guide` has no
-    /// invalid state beyond id uniqueness (its `axis` is an enum and `position` is any
-    /// `i32`), and export **components** don't exist yet — `ExportConfig` is a
-    /// provisional stub, so only its id uniqueness is checked. Both land in full with
-    /// the export crate at Milestone 5 (spec/10).
+    /// One §14.1 clause is structurally vacuous: a `Guide` has no invalid state beyond
+    /// id uniqueness (its `axis` is an enum and `position` is any `i32`). Export configs
+    /// are checked for config-id and component-id (address/data map) uniqueness; the
+    /// deep strict-1:1 coverage checks (spec/10 §10.7, §14.3) live in `fontspace-export`,
+    /// not in document validation.
     pub fn validate(&self, limits: &Limits) -> ValidationReport {
         let mut report = ValidationReport::default();
 
@@ -284,8 +286,10 @@ impl FontSpace {
             }
         }
 
-        // Export configs: id uniqueness (provisional type; spec/10 lands at M5).
+        // Export configs: config-id uniqueness, and component-id (address/data map)
+        // uniqueness across every config in the document (spec/14.1).
         let mut seen_export_config_ids = HashSet::new();
+        let mut seen_export_component_ids = HashSet::new();
         for export_config in &self.export_configs {
             check_unique(
                 &mut seen_export_config_ids,
@@ -293,6 +297,14 @@ impl FontSpace {
                 &mut report.errors,
                 ValidationError::DuplicateExportConfigId,
             );
+            for component_id in [export_config.address_map.id, export_config.data_map.id] {
+                check_unique(
+                    &mut seen_export_component_ids,
+                    component_id,
+                    &mut report.errors,
+                    ValidationError::DuplicateExportComponentId,
+                );
+            }
         }
 
         if total_glyph_pixels > limits.max_total_glyph_pixels_per_document {
