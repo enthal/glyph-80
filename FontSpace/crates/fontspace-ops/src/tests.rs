@@ -7,6 +7,8 @@ use fontspace_model::{
 };
 use proptest::prelude::*;
 
+use crate::apply_change_set;
+use crate::change_set::{ChangeSet, GlyphSetChange, ObjectChange};
 use crate::{
     AddCharacterEntry, AddExportConfig, AddGlyphSet, AddGuide, AddPage, ClearGlyphs,
     CopyGuideToPages, FontSpaceError, FontSpaceWarning, GlyphRef, GlyphSelector, InvertGlyphs,
@@ -1329,6 +1331,51 @@ fn replace_export_config_swaps_in_place_and_undo_restores() {
     undo(&mut f.doc, &change_set).unwrap();
     assert_eq!(f.doc.export_configs[0].id, id);
     assert_eq!(f.doc.export_configs[0].name, "ROM");
+}
+
+#[test]
+fn glyph_set_remove_and_reinsert_restores_position() {
+    // The strict-layer inversion tests above run on ≤1-element vectors, so they can't
+    // catch a re-insert that ignores `index` and appends. Build a 3-set document and
+    // remove/undo a *non-tail* set (a change set of the shape `remove_glyph_set` would
+    // emit): undo must restore its original position exactly, not push it to the end.
+    let mut f = fixture();
+    for name in ["second", "third"] {
+        add_glyph_set(
+            &mut f.doc,
+            &AddGlyphSet {
+                name: name.into(),
+                description: String::new(),
+                glyph_size: GlyphSize::new(8, 8),
+                character_set_id: f.character_set,
+                initial_page_name: None,
+            },
+            &mut f.ids,
+        )
+        .unwrap();
+    }
+    let names_before: Vec<_> = f.doc.glyph_sets.iter().map(|gs| gs.name.clone()).collect();
+    assert_eq!(names_before.len(), 3);
+
+    let middle = f.doc.glyph_sets[1].clone();
+    let remove = ChangeSet {
+        object_changes: vec![ObjectChange::GlyphSetChanged(Box::new(GlyphSetChange {
+            index: 1,
+            before: Some(middle),
+            after: None,
+        }))],
+        warnings: Vec::new(),
+    };
+    apply_change_set(&mut f.doc, &remove).unwrap();
+    assert_eq!(f.doc.glyph_sets.len(), 2);
+    assert_eq!(
+        f.doc.glyph_sets[1].name, "third",
+        "the middle set was removed"
+    );
+
+    undo(&mut f.doc, &remove).unwrap();
+    let names_after: Vec<_> = f.doc.glyph_sets.iter().map(|gs| gs.name.clone()).collect();
+    assert_eq!(names_after, names_before, "re-insert restores exact order");
 }
 
 #[test]
