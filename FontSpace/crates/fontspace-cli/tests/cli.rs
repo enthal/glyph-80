@@ -708,3 +708,146 @@ fn cli_paste_size_conversion_matches_library() {
     assert_eq!(fs::read_to_string(&path).unwrap(), expected);
     fs::remove_dir_all(path.parent().unwrap()).ok();
 }
+
+/// Runs `fontspace add-export-config` on `path`, adding a row-scan config named
+/// `config` over the "Regular" page with `code_bits` code bits.
+fn add_export_config(path: &std::path::Path, config: &str, code_bits: &str) {
+    let status = Command::new(env!("CARGO_BIN_EXE_fontspace"))
+        .args([
+            "add-export-config",
+            path.to_str().unwrap(),
+            "--name",
+            config,
+            "--glyph-set",
+            "gs",
+            "--pages",
+            "Regular",
+            "--code-bits",
+            code_bits,
+            "--seq",
+        ])
+        .status()
+        .unwrap();
+    assert!(status.success(), "add-export-config failed");
+}
+
+#[test]
+fn cli_export_matches_library_export() {
+    use fontspace_export::{encode_raw_binary, generate_image, row_scan_config, validate_export};
+    use fontspace_model::Limits;
+
+    let doc = sample_doc();
+    // Library: the same row-scan config over the Regular page → raw bytes. The image is
+    // id-independent, so a fresh generator is fine.
+    let mut ids = SequentialIdGen::new();
+    let gs = &doc.glyph_sets[0];
+    let regular = gs.pages[0].id;
+    let config = row_scan_config(&mut ids, "rom", gs, vec![regular], 7);
+    let limits = Limits::default();
+    let summary = validate_export(gs, &config, &limits).unwrap();
+    let expected = encode_raw_binary(
+        &generate_image(gs, &config, &limits).unwrap(),
+        summary.data_bits,
+    );
+
+    // CLI: add the config, then export.
+    let path = temp_path("export");
+    fs::write(&path, fontspace_json::save(&doc)).unwrap();
+    add_export_config(&path, "rom", "7");
+    let bin = path.parent().unwrap().join("rom.bin");
+    let status = Command::new(env!("CARGO_BIN_EXE_fontspace"))
+        .args([
+            "export",
+            path.to_str().unwrap(),
+            "--config",
+            "rom",
+            "--output",
+            bin.to_str().unwrap(),
+        ])
+        .status()
+        .unwrap();
+    assert!(status.success());
+
+    let via_cli = fs::read(&bin).unwrap();
+    assert_eq!(via_cli, expected, "CLI export must match library export");
+    // 3 row bits + 7 code bits + 0 page bits = 10 address bits → 1024 one-byte words.
+    assert_eq!(via_cli.len(), 1024);
+    fs::remove_dir_all(path.parent().unwrap()).ok();
+}
+
+#[test]
+fn cli_validate_export_prints_the_summary() {
+    let doc = sample_doc();
+    let path = temp_path("validate-export");
+    fs::write(&path, fontspace_json::save(&doc)).unwrap();
+    add_export_config(&path, "rom", "7");
+
+    let out = Command::new(env!("CARGO_BIN_EXE_fontspace"))
+        .args(["validate-export", path.to_str().unwrap(), "--config", "rom"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("Valid 1:1 export"), "{text}");
+    assert!(text.contains("128 codes (7 code bits)"), "{text}");
+    assert!(text.contains("1024 output bytes"), "{text}");
+    fs::remove_dir_all(path.parent().unwrap()).ok();
+}
+
+#[test]
+fn cli_export_dry_run_writes_no_binary() {
+    let doc = sample_doc();
+    let path = temp_path("export-dryrun");
+    fs::write(&path, fontspace_json::save(&doc)).unwrap();
+    add_export_config(&path, "rom", "7");
+
+    let bin = path.parent().unwrap().join("rom.bin");
+    let out = Command::new(env!("CARGO_BIN_EXE_fontspace"))
+        .args([
+            "export",
+            path.to_str().unwrap(),
+            "--config",
+            "rom",
+            "--output",
+            bin.to_str().unwrap(),
+            "--dry-run",
+        ])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    assert!(!bin.exists(), "--dry-run must not write the .bin");
+    fs::remove_dir_all(path.parent().unwrap()).ok();
+}
+
+#[test]
+fn cli_export_rejects_a_non_1to1_config_without_writing() {
+    let doc = sample_doc();
+    let path = temp_path("export-invalid");
+    fs::write(&path, fontspace_json::save(&doc)).unwrap();
+    // 6 code bits addresses only 0..63, but 'A' (0x41 = 65) is drawn → not 1:1.
+    add_export_config(&path, "rom", "6");
+
+    let bin = path.parent().unwrap().join("rom.bin");
+    let out = Command::new(env!("CARGO_BIN_EXE_fontspace"))
+        .args([
+            "export",
+            path.to_str().unwrap(),
+            "--config",
+            "rom",
+            "--output",
+            bin.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        !out.status.success(),
+        "export of a non-1:1 config must fail"
+    );
+    assert!(!bin.exists(), "no .bin is written on a validation failure");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("0x0041") || stderr.contains("addressable"),
+        "{stderr}"
+    );
+    fs::remove_dir_all(path.parent().unwrap()).ok();
+}

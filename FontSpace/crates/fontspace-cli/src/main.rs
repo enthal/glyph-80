@@ -13,11 +13,16 @@ use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
 
+use fontspace_export::{
+    ExportError, column_scan_config, encode_raw_binary, generate_image, row_scan_config,
+    validate_export,
+};
 use fontspace_json::{
     JsonError, load as load_json, load_fragment, save as save_json, write_fragment,
 };
 use fontspace_model::{
-    FontSpace, FontSpaceFragment, GlyphSetId, IdGen, PageId, RandomIdGen, SequentialIdGen,
+    ExportConfig, FontSpace, FontSpaceFragment, GlyphSet, GlyphSetId, IdGen, Limits, PageId,
+    RandomIdGen, SequentialIdGen,
 };
 use fontspace_ops::{
     ChangeSet, ExtractGlyphs, FontSpaceError, GlyphRef, GlyphSelector, PasteGlyphs, PixelEdit,
@@ -159,6 +164,44 @@ enum Command {
         #[arg(long, default_value = "require-exact")]
         size: String,
     },
+    /// Add a standard row/column-scan ROM export config to the document (spec/10).
+    AddExportConfig {
+        path: PathBuf,
+        /// A name for the new export config.
+        #[arg(long)]
+        name: String,
+        #[arg(long)]
+        glyph_set: String,
+        /// Comma-separated page names in ROM page order, or `all` (spec/10 §10.4).
+        #[arg(long, default_value = "all")]
+        pages: String,
+        /// Address-space width for the code dimension: the ROM spans `2^code_bits`
+        /// codes (spec/10 §10.2). 7 → the 128-code ASCII range.
+        #[arg(long, default_value_t = 7)]
+        code_bits: u8,
+        /// `row` (the row is addressed, columns on the data bits — the usual text ROM)
+        /// or `column` (spec/10 §10.4).
+        #[arg(long, default_value = "row")]
+        scan: String,
+    },
+    /// Validate that an export config is a strict 1:1 ROM and print its shape (spec/10
+    /// §10.7).
+    ValidateExport {
+        path: PathBuf,
+        /// The export config's name.
+        #[arg(long)]
+        config: String,
+    },
+    /// Render an export config to a raw binary ROM image (spec/10 §10.9). Validates
+    /// first; `--dry-run` prints the summary and writes nothing.
+    Export {
+        path: PathBuf,
+        #[arg(long)]
+        config: String,
+        /// Destination `.bin` file.
+        #[arg(long)]
+        output: PathBuf,
+    },
 }
 
 /// Everything a command can fail with; rendered to stderr by `main`.
@@ -182,6 +225,16 @@ enum CliError {
     FileExists(String),
     #[error("--page must match exactly one page, but matched {count}")]
     PageTargetNotUnique { count: usize },
+    #[error(transparent)]
+    Export(#[from] ExportError),
+    #[error("no export config named {0:?}")]
+    ExportConfigNotFound(String),
+    #[error("export config {config:?} references a glyph set not in this document")]
+    ExportSourceMissing { config: String },
+    #[error("no page named {0:?} in the glyph set")]
+    PageNotFound(String),
+    #[error("unknown scan {0:?} (expected 'row' or 'column')")]
+    UnknownScan(String),
 }
 
 fn main() -> ExitCode {
@@ -407,7 +460,113 @@ fn run(cli: Cli) -> Result<(), CliError> {
             )?;
             finish_mutation(&path, &doc, &change_set, cli.dry_run)
         }
+
+        Command::AddExportConfig {
+            path,
+            name,
+            glyph_set,
+            pages,
+            code_bits,
+            scan,
+        } => {
+            let mut doc = load_document(&path)?;
+            let glyph_set_id = resolve_glyph_set(&doc, &glyph_set)?;
+            let config = {
+                let gs = doc
+                    .glyph_set(glyph_set_id)
+                    .ok_or_else(|| ParseError::GlyphSetNotFound(glyph_set.clone()))?;
+                let page_ids = pages_of(gs, &pages)?;
+                match scan.as_str() {
+                    "row" => row_scan_config(ids.as_mut(), &name, gs, page_ids, code_bits),
+                    "column" => column_scan_config(ids.as_mut(), &name, gs, page_ids, code_bits),
+                    other => return Err(CliError::UnknownScan(other.to_string())),
+                }
+            };
+            doc.export_configs.push(config);
+            if cli.dry_run {
+                println!("dry-run: export config {name:?} not written");
+            } else {
+                write_document(&path, &doc)?;
+                println!("added export config {name:?}");
+            }
+            Ok(())
+        }
+
+        Command::ValidateExport { path, config } => {
+            let doc = load_document(&path)?;
+            let export_config = find_export_config(&doc, &config)?;
+            let glyph_set = source_glyph_set(&doc, export_config, &config)?;
+            let summary = validate_export(glyph_set, export_config, &Limits::default())?;
+            println!("{summary}");
+            Ok(())
+        }
+
+        Command::Export {
+            path,
+            config,
+            output,
+        } => {
+            let doc = load_document(&path)?;
+            let export_config = find_export_config(&doc, &config)?;
+            let glyph_set = source_glyph_set(&doc, export_config, &config)?;
+            let limits = Limits::default();
+            // Always validate first: never emit bytes from a non-1:1 config.
+            let summary = validate_export(glyph_set, export_config, &limits)?;
+            if cli.dry_run {
+                println!(
+                    "dry-run: valid — {} output bytes (nothing written)",
+                    summary.output_bytes
+                );
+                println!("{summary}");
+            } else {
+                let image = generate_image(glyph_set, export_config, &limits)?;
+                let bytes = encode_raw_binary(&image, summary.data_bits);
+                fs::write(&output, &bytes)?;
+                println!("wrote {} bytes to {}", bytes.len(), output.display());
+            }
+            Ok(())
+        }
     }
+}
+
+/// The ordered page ids named by `pages` (comma-separated names, or `all`), for an
+/// export's page sequence (spec/10 §10.4).
+fn pages_of(glyph_set: &GlyphSet, pages: &str) -> Result<Vec<PageId>, CliError> {
+    if pages.trim() == "all" {
+        return Ok(glyph_set.pages.iter().map(|page| page.id).collect());
+    }
+    pages
+        .split(',')
+        .map(|name| {
+            let name = name.trim();
+            glyph_set
+                .pages
+                .iter()
+                .find(|page| page.name == name)
+                .map(|page| page.id)
+                .ok_or_else(|| CliError::PageNotFound(name.to_string()))
+        })
+        .collect()
+}
+
+/// The export config named `name`, or a not-found error.
+fn find_export_config<'a>(doc: &'a FontSpace, name: &str) -> Result<&'a ExportConfig, CliError> {
+    doc.export_configs
+        .iter()
+        .find(|config| config.name == name)
+        .ok_or_else(|| CliError::ExportConfigNotFound(name.to_string()))
+}
+
+/// The glyph set an export config sources from (spec/10 §10.1), or a missing-source error.
+fn source_glyph_set<'a>(
+    doc: &'a FontSpace,
+    config: &ExportConfig,
+    config_name: &str,
+) -> Result<&'a GlyphSet, CliError> {
+    doc.glyph_set(config.source.glyph_set_id)
+        .ok_or_else(|| CliError::ExportSourceMissing {
+            config: config_name.to_string(),
+        })
 }
 
 fn print_info(doc: &FontSpace) {

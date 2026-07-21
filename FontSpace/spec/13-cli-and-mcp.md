@@ -24,6 +24,15 @@ fontspace paste file.fontspace.json \
   --fragment fragment.json \
   --glyph-set "Terminal 8x16" --page Bold \
   --mapping by-code
+
+fontspace add-export-config file.fontspace.json \
+  --name "AT28C64 Text ROM" --glyph-set "Terminal 8x16" \
+  --pages Regular,Bold,Italic,Underline --code-bits 7
+
+fontspace validate-export file.fontspace.json --config "AT28C64 Text ROM"
+
+fontspace export file.fontspace.json \
+  --config "AT28C64 Text ROM" --output text-rom.bin
 ```
 
 Glyph ranges accept characters (`A-Z`), decimal, or `0x` hex codes, resolved via the referenced character set.
@@ -31,6 +40,8 @@ Glyph ranges accept characters (`A-Z`), decimal, or `0x` hex codes, resolved via
 **`extract`** copies the selected glyphs off **one** page (`--page` must resolve to exactly one page — an ambiguous or multi-page selector is an error, never silently narrowed) into a canonical glyph fragment (§8.5). `--glyphs` defaults to all glyphs. Because a glyph fragment is a flat, page-agnostic list of codes, copying whole pages or several pages at once is the job of a `Pages` fragment, which arrives with that slice.
 
 **`paste`** places a glyph fragment onto one page (again `--page` must resolve to exactly one), returning one invertible change. `--mapping` chooses the destination code — `by-code` (the default), `by-slot` (place each glyph on the destination entry at the same ordinal), or `sequential-from-code:CODE` (§8.3). `--size` chooses the geometry policy: `require-exact` (the default — a size difference is an error, never a silent resize), `center`, `place-at:X,Y` (a signed pixel offset), or `scale-nearest` (nearest-neighbor resample); the placement conversions clip whatever falls outside, and only `scale-nearest` resamples. Like every mutating command it honors `--dry-run` and writes atomically. `crop` lands with a later slice.
+
+**ROM export** (chapter 10). **`add-export-config`** adds a standard `--scan` (`row`, the default text-ROM layout, or `column`) 1:1 config to the document: the addressed pixel axis plus `--code-bits` code bits and page bits (sized to `--pages`, an ordered comma list of page names or `all`) go in the address, and the other axis comes out on the data bits (row-scan → column `x=0` is the most-significant data bit). **`validate-export`** checks a named config is a strict 1:1 mapping (§10.7) and prints its shape, or a diagnostic. **`export`** validates and then writes the dense raw-binary image (§10.9) to `--output`; it never emits bytes from a non-1:1 config, and `--dry-run` prints the summary without writing. The `.bin` is an output artifact, not a document, so it is written directly (not the atomic document replacement).
 
 **`render-text` subjects.** The subject is exactly one of three mutually-exclusive forms; supplying more than one is an error:
 

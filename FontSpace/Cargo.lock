@@ -1322,6 +1322,7 @@ version = "0.0.0"
 dependencies = [
  "cargo-husky",
  "clap",
+ "fontspace-export",
  "fontspace-json",
  "fontspace-model",
  "fontspace-ops",

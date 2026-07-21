@@ -16,6 +16,7 @@ fontspace-model = { path = "../fontspace-model" }
 fontspace-json = { path = "../fontspace-json" }
 fontspace-ops = { path = "../fontspace-ops" }
 fontspace-render = { path = "../fontspace-render" }
+fontspace-export = { path = "../fontspace-export" }
 clap = { version = "4", features = ["derive"] }
 thiserror = "2"
 
