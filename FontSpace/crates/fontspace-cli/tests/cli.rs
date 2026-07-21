@@ -820,6 +820,57 @@ fn cli_export_dry_run_writes_no_binary() {
 }
 
 #[test]
+fn cli_export_dry_run_needs_no_output() {
+    // Regression: `--dry-run` writes nothing, so it must not require `--output`.
+    let doc = sample_doc();
+    let path = temp_path("export-dryrun-no-output");
+    fs::write(&path, fontspace_json::save(&doc)).unwrap();
+    add_export_config(&path, "rom", "7");
+
+    let out = Command::new(env!("CARGO_BIN_EXE_fontspace"))
+        .args([
+            "export",
+            path.to_str().unwrap(),
+            "--config",
+            "rom",
+            "--dry-run",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "dry-run without --output must succeed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains("dry-run"),
+        "prints the dry-run summary"
+    );
+    fs::remove_dir_all(path.parent().unwrap()).ok();
+}
+
+#[test]
+fn cli_export_without_output_or_dry_run_errors_cleanly() {
+    // Writing for real still needs a destination — a clear error, not a clap usage dump.
+    let doc = sample_doc();
+    let path = temp_path("export-no-output");
+    fs::write(&path, fontspace_json::save(&doc)).unwrap();
+    add_export_config(&path, "rom", "7");
+
+    let out = Command::new(env!("CARGO_BIN_EXE_fontspace"))
+        .args(["export", path.to_str().unwrap(), "--config", "rom"])
+        .output()
+        .unwrap();
+    assert!(!out.status.success(), "a real export needs --output");
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("--output is required"),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    fs::remove_dir_all(path.parent().unwrap()).ok();
+}
+
+#[test]
 fn cli_export_rejects_a_non_1to1_config_without_writing() {
     let doc = sample_doc();
     let path = temp_path("export-invalid");
