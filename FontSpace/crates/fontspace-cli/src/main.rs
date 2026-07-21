@@ -198,9 +198,9 @@ enum Command {
         path: PathBuf,
         #[arg(long)]
         config: String,
-        /// Destination `.bin` file.
+        /// Destination `.bin` file. Required unless `--dry-run` (which writes nothing).
         #[arg(long)]
-        output: PathBuf,
+        output: Option<PathBuf>,
     },
 }
 
@@ -241,6 +241,8 @@ enum CliError {
     PageNotFound(String),
     #[error("unknown scan {0:?} (expected 'row' or 'column')")]
     UnknownScan(String),
+    #[error("--output is required to write the ROM image (omit it only with --dry-run)")]
+    OutputRequired,
 }
 
 fn main() -> ExitCode {
@@ -527,6 +529,9 @@ fn run(cli: Cli) -> Result<(), CliError> {
                 );
                 println!("{summary}");
             } else {
+                // `--output` is only needed when actually writing, so it is required
+                // here rather than by clap — a dry run validates without one.
+                let output = output.ok_or(CliError::OutputRequired)?;
                 let image = generate_image(glyph_set, export_config, &limits)?;
                 let bytes = encode_raw_binary(&image, summary.data_bits);
                 fs::write(&output, &bytes).map_err(|source| CliError::WriteFile {
