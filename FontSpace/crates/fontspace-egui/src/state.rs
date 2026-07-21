@@ -75,6 +75,9 @@ pub struct AppState {
     /// Whether the text preview draws 1px dividers between glyph cells (spec/12
     /// §12.10). UI state, default off.
     pub preview_dividers: bool,
+    /// Integer zoom for the text preview — pixels per glyph pixel (spec/12 §12.10).
+    /// UI state, dialable in the view; default 4.
+    pub preview_scale: u32,
     /// A document-replacing action awaiting unsaved-changes confirmation (spec/12
     /// §12.12), or `None` when no modal is open.
     pending_discard: Option<GuardedIntent>,
@@ -143,6 +146,7 @@ impl AppState {
             grid: GridLevel::Subtle,
             preview_text: "AAA HAH".to_string(),
             preview_dividers: false,
+            preview_scale: 4,
             pending_discard: None,
             status: None,
             active_stroke: None,

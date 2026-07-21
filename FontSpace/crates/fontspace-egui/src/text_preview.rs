@@ -13,8 +13,6 @@ use crate::charset_view::glyph_tooltip;
 use crate::glyph_paint::paint_bitmap;
 use crate::state::AppState;
 
-/// Pixels per glyph pixel in the preview.
-const SCALE: f32 = 4.0;
 /// The 1px divider drawn between glyph cells when enabled (spec/12 §12.10).
 const DIVIDER: Color32 = Color32::from_rgb(80, 160, 240);
 
@@ -37,11 +35,15 @@ pub fn show_text_preview(ui: &mut egui::Ui, state: &mut AppState) {
                 .desired_width(f32::INFINITY),
         );
     });
-    ui.checkbox(&mut state.preview_dividers, "Dividers");
+    ui.horizontal(|ui| {
+        ui.checkbox(&mut state.preview_dividers, "Dividers");
+        ui.add(egui::Slider::new(&mut state.preview_scale, 1..=16).text("Scale"));
+    });
     ui.separator();
 
     // Snapshot what the render needs; the header's `&mut state` writes are done.
     let dividers = state.preview_dividers;
+    let scale = state.preview_scale.max(1) as f32;
     let Some((glyph_set, page)) = state.selected_context() else {
         ui.weak("No page selected.");
         return;
@@ -67,7 +69,7 @@ pub fn show_text_preview(ui: &mut egui::Ui, state: &mut AppState) {
                 ui.spacing_mut().item_spacing = Vec2::ZERO;
                 for &code in &codes {
                     let bitmap = page.glyph_of_code(code).map(|glyph| &glyph.bitmap);
-                    let response = paint_glyph(ui, bitmap, size, dividers)
+                    let response = paint_glyph(ui, bitmap, size, dividers, scale)
                         .on_hover_text(glyph_tooltip(code, character_set));
                     if response.clicked() {
                         clicked = Some(code);
@@ -81,16 +83,17 @@ pub fn show_text_preview(ui: &mut egui::Ui, state: &mut AppState) {
     }
 }
 
-/// Paints one glyph cell at the preview scale, returning its click response. With
-/// `dividers`, draws a 1px line on the cell's right and bottom edges so flush cells
-/// read as a grid (spec/12 §12.10).
+/// Paints one glyph cell at `scale` pixels per glyph pixel, returning its click
+/// response. With `dividers`, draws a 1px line on the cell's right and bottom edges so
+/// flush cells read as a grid (spec/12 §12.10).
 fn paint_glyph(
     ui: &mut egui::Ui,
     bitmap: Option<&Bitmap>,
     size: GlyphSize,
     dividers: bool,
+    scale: f32,
 ) -> Response {
-    let extent = Vec2::new(size.width as f32 * SCALE, size.height as f32 * SCALE);
+    let extent = Vec2::new(size.width as f32 * scale, size.height as f32 * scale);
     let (rect, response) = ui.allocate_exact_size(extent, Sense::click());
     let painter = ui.painter_at(rect);
     paint_bitmap(&painter, rect, bitmap, size);
