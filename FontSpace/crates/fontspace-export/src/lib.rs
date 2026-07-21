@@ -269,6 +269,25 @@ pub fn validate_export(
         });
     }
 
+    // Bound the address width up front, before any `1 << bits`: every dimension's bit
+    // count is ≤ the address width, so guarding it here keeps all shifts below safe.
+    let address_bits = config.address_map.address_bits.len();
+    if address_bits as u32 > limits.max_export_address_width || address_bits > 32 {
+        return Err(ExportError::AddressTooWide {
+            config: name.clone(),
+            address_bits,
+            max: limits.max_export_address_width.min(32),
+        });
+    }
+    let words = 1u64 << address_bits;
+    if words > limits.max_output_image_pixels {
+        return Err(ExportError::ImageTooLarge {
+            config: name.clone(),
+            words,
+            max: limits.max_output_image_pixels,
+        });
+    }
+
     // Classify every address line into a dimension; reject constant/inverted lines,
     // which cannot appear in a strict-1:1 address (they would duplicate or drop coords).
     let (mut code_ns, mut page_ns, mut x_ns, mut y_ns) = (vec![], vec![], vec![], vec![]);
@@ -388,22 +407,6 @@ pub fn validate_export(
         }
     }
 
-    let address_bits = config.address_map.address_bits.len();
-    if address_bits as u32 > limits.max_export_address_width || address_bits > 32 {
-        return Err(ExportError::AddressTooWide {
-            config: name,
-            address_bits,
-            max: limits.max_export_address_width.min(32),
-        });
-    }
-    let words = 1u64 << address_bits;
-    if words > limits.max_output_image_pixels {
-        return Err(ExportError::ImageTooLarge {
-            config: name,
-            words,
-            max: limits.max_output_image_pixels,
-        });
-    }
     let output_bytes = words * data_bits.div_ceil(8).max(1) as u64;
 
     Ok(ExportSummary {
@@ -516,6 +519,63 @@ pub fn row_scan_config(
         data_map: DataMap {
             id: ExportComponentId::new(ids),
             name: "row-scan data".into(),
+            output_bits,
+        },
+        output_format: OutputFormatConfig::RawBinary,
+    }
+}
+
+/// Builds the standard **column-scan** ROM config: the column (`pixel_x`) and enough
+/// `code`/`page` bits go in the address (low→high: column, code, page), and data bit
+/// `Di` emits row `y = height-1-i` of the addressed column — so the top pixel is the
+/// most-significant data bit. The counterpart to [`row_scan_config`] for hardware that
+/// scans columns; each word is one glyph column.
+pub fn column_scan_config(
+    ids: &mut dyn IdGen,
+    name: impl Into<String>,
+    glyph_set: &GlyphSet,
+    pages: Vec<PageId>,
+    code_bits: u8,
+) -> ExportConfig {
+    let size = glyph_set.glyph_size;
+    let x_bits = bits_for(size.width as u32);
+    let page_bits = bits_for(pages.len() as u32);
+
+    let mut address_bits = Vec::new();
+    for n in 0..x_bits {
+        address_bits.push(AddressBitSource::PixelXBit(n as u8));
+    }
+    for n in 0..code_bits {
+        address_bits.push(AddressBitSource::CodeBit(n));
+    }
+    for n in 0..page_bits {
+        address_bits.push(AddressBitSource::PageBit(n as u8));
+    }
+
+    let output_bits = (0..size.height)
+        .map(|i| OutputBitSource::Pixel {
+            x: CoordinateExpr::AddressedX,
+            // Di emits row (height-1-i): the top pixel is the MSB (D_{height-1}).
+            y: CoordinateExpr::Constant((size.height - 1 - i) as i32),
+        })
+        .collect();
+
+    ExportConfig {
+        id: fontspace_model::ExportConfigId::new(ids),
+        name: name.into(),
+        description: String::new(),
+        source: ExportSourceSpec {
+            glyph_set_id: glyph_set.id,
+            pages,
+        },
+        address_map: AddressMap {
+            id: ExportComponentId::new(ids),
+            name: "column-scan address".into(),
+            address_bits,
+        },
+        data_map: DataMap {
+            id: ExportComponentId::new(ids),
+            name: "column-scan data".into(),
             output_bits,
         },
         output_format: OutputFormatConfig::RawBinary,
@@ -712,6 +772,93 @@ mod tests {
             encode_raw_binary(&[0x123, 0x0FF], 12),
             vec![0x23, 0x01, 0xFF, 0x00]
         );
+    }
+
+    #[test]
+    fn column_scan_emits_glyph_column_bytes_on_a_non_square_glyph() {
+        let mut ids = SequentialIdGen::new();
+        // 8 wide × 16 tall: width ≠ height catches an axis swap.
+        let (mut set, pages) = glyph_set(&mut ids, GlyphSize::new(8, 16), 1);
+        // A lone top pixel (0,0) must land in the MSB of column 0's 16-bit word.
+        draw(&mut set, 0, 0, &[(0, 0), (0, 15)]);
+        let config = column_scan_config(&mut ids, "col", &set, pages, 1);
+
+        let summary = validate_export(&set, &config, &Limits::default()).unwrap();
+        assert_eq!(summary.scan, ScanDirection::Column);
+        assert_eq!(summary.data_bits, 16); // one data bit per row
+        // address bits: 3 column (width 8) + 1 code = 4 → 16 words × 2 bytes = 32 bytes.
+        assert_eq!(summary.output_bytes, 32);
+
+        let image = generate_image(&set, &config, &Limits::default()).unwrap();
+        // Column 0 of code 0: top pixel (0,0) → bit 15; bottom (0,15) → bit 0.
+        assert_eq!(image[0], 0x8001);
+        // Every other addressed column is blank (only column 0 drawn).
+        assert_eq!(image.iter().filter(|&&w| w != 0).count(), 1);
+    }
+
+    #[test]
+    fn validate_rejects_an_over_wide_address_without_panicking() {
+        // A dimension with ≥64 bits would overflow a `1 << bits` shift; the address
+        // guard must reject it up front with a typed error, never panic.
+        let mut ids = SequentialIdGen::new();
+        let (set, pages) = glyph_set(&mut ids, GlyphSize::new(8, 8), 1);
+        let mut config = row_scan_config(&mut ids, "rom", &set, pages, 1);
+        config.address_map.address_bits = (0..64).map(AddressBitSource::CodeBit).collect();
+        let err = validate_export(&set, &config, &Limits::default()).unwrap_err();
+        assert!(matches!(err, ExportError::AddressTooWide { .. }), "{err}");
+    }
+
+    #[test]
+    fn evaluate_honors_inversion_and_coordinate_offsets() {
+        use fontspace_model::{AddressMap, DataMap, ExportComponentId, ExportConfigId};
+        let mut ids = SequentialIdGen::new();
+        let (mut set, pages) = glyph_set(&mut ids, GlyphSize::new(4, 4), 1);
+        draw(&mut set, 0, 0, &[(1, 0)]); // a single pixel at (1,0)
+        let page_id = pages[0];
+
+        // A hand-built config: address = inverted code bit 0 (so raw 0 → code 0) and a
+        // single row bit; data D0 reads the pixel one column right of the addressed x
+        // (AddressedXPlus(1)) at row 0, and D1 is its inversion.
+        let config = ExportConfig {
+            id: ExportConfigId::new(&mut ids),
+            name: "hand".into(),
+            description: String::new(),
+            source: ExportSourceSpec {
+                glyph_set_id: set.id,
+                pages: vec![page_id],
+            },
+            address_map: AddressMap {
+                id: ExportComponentId::new(&mut ids),
+                name: "a".into(),
+                // A0 = pixel_x bit 0 (addressed column), A1 = inverted code bit 0.
+                address_bits: vec![
+                    AddressBitSource::PixelXBit(0),
+                    AddressBitSource::Inverted(Box::new(AddressBitSource::CodeBit(0))),
+                ],
+            },
+            data_map: DataMap {
+                id: ExportComponentId::new(&mut ids),
+                name: "d".into(),
+                output_bits: vec![
+                    OutputBitSource::Pixel {
+                        x: CoordinateExpr::AddressedXPlus(1),
+                        y: CoordinateExpr::Constant(0),
+                    },
+                    OutputBitSource::Inverted(Box::new(OutputBitSource::Pixel {
+                        x: CoordinateExpr::AddressedXPlus(1),
+                        y: CoordinateExpr::Constant(0),
+                    })),
+                ],
+            },
+            output_format: OutputFormatConfig::RawBinary,
+        };
+
+        // Address 0: pixel_x=0; A1 raw 0, inverted → code bit set → code 1 (undrawn), so
+        // D0 reads (1,0) off → 0, D1 = inversion → 1. Word = 0b10.
+        assert_eq!(evaluate_output_word(&set, &config, 0), 0b10);
+        // Address 2 (A1 raw 1, inverted → code 0): D0 reads (0+1, 0) = (1,0) = on → bit0,
+        // D1 = inversion → 0. Word = 0b01.
+        assert_eq!(evaluate_output_word(&set, &config, 0b10), 0b01);
     }
 
     #[test]
