@@ -10,21 +10,25 @@
 
 use std::path::{Path, PathBuf};
 
-use fontspace_export::row_scan_config;
+use fontspace_export::{
+    ExportError, ExportSummary, ScanDirection, column_scan_config, row_scan_config, validate_export,
+};
 use fontspace_json::{LoadOutcome, load_fragment, save_fragment};
 use fontspace_model::{
-    Bitmap, CharacterEntry, CharacterSet, CharacterSetId, ExportConfigId, FontSpace,
-    FontSpaceFragment, FragmentGlyph, Glyph, GlyphFragment, GlyphPage, GlyphSet, GlyphSetId,
-    GlyphSize, Guide, GuideAxis, GuideId, IdGen, OverflowPolicy, PageId, RandomIdGen,
+    AddressBitSource, Bitmap, CharacterEntry, CharacterSet, CharacterSetId, CoordinateExpr,
+    ExportConfig, ExportConfigId, FontSpace, FontSpaceFragment, FragmentGlyph, Glyph,
+    GlyphFragment, GlyphPage, GlyphSet, GlyphSetId, GlyphSize, Guide, GuideAxis, GuideId, IdGen,
+    Limits, OutputBitSource, OverflowPolicy, PageId, RandomIdGen,
 };
 
 use fontspace_ops::{
     AddExportConfig, AddGlyphSet, AddGuide, ChangeSet, ClearGlyphs, FontSpaceWarning, GlyphMapping,
     GlyphRef, GlyphSelector, GlyphSizeConversion, InvertGlyphs, MoveGuide, PageSelector,
-    PasteGlyphs, RemoveCharacterEntry, RemoveGuide, RenameGuide, SetGuideVisible, SetPixels,
-    ShiftGlyphs, add_export_config, add_glyph_set, add_guide, apply_change_set, clear_glyphs,
-    invert_glyphs, move_guide, paste_glyphs, remove_character_entry, remove_guide, rename_guide,
-    set_guide_visible, set_pixels, shift_glyphs, undo,
+    PasteGlyphs, RemoveCharacterEntry, RemoveGuide, RenameGuide, ReplaceExportConfig,
+    SetGuideVisible, SetPixels, ShiftGlyphs, add_export_config, add_glyph_set, add_guide,
+    apply_change_set, clear_glyphs, invert_glyphs, move_guide, paste_glyphs,
+    remove_character_entry, remove_guide, rename_guide, replace_export_config, set_guide_visible,
+    set_pixels, shift_glyphs, undo,
 };
 
 use crate::editor::geometry::GridLevel;
@@ -41,6 +45,22 @@ pub struct Selection {
     pub glyph_set_id: GlyphSetId,
     pub page_id: PageId,
     pub code: u32,
+}
+
+/// The editable high-level parameters of an export config, as the Export Configuration
+/// view holds them between frames (spec/12 §12.11 inspector / §12.12). It is a working
+/// draft: edits stay here until **Apply** rebuilds the config from a scan preset. The
+/// address/data maps are derived (not edited directly in this strict-1:1 slice), and the
+/// page sequence is always the source's pages in order (page-subset editing is a
+/// follow-up). Tagged with `config_id` so the view re-initializes it when the selection
+/// moves to a different config.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExportConfigForm {
+    pub config_id: ExportConfigId,
+    pub name: String,
+    pub glyph_set_id: GlyphSetId,
+    pub scan: ScanDirection,
+    pub code_bits: u8,
 }
 
 /// A file action that would discard the active document's unsaved edits, held pending
@@ -129,6 +149,10 @@ pub struct AppState {
     /// `None` when none is selected. UI state; set when one is created or picked in the
     /// document browser, cleared if it no longer resolves.
     selected_export_config: Option<ExportConfigId>,
+    /// The Export Configuration view's working draft of the selected config's parameters
+    /// (spec/12 §12.11), re-initialized when the selection moves. UI state; committed to
+    /// the document only on **Apply**.
+    export_form: Option<ExportConfigForm>,
 }
 
 impl Default for AppState {
@@ -167,6 +191,7 @@ impl AppState {
             glyph_fragment_clipboard: None,
             shift_wrap: false,
             selected_export_config: None,
+            export_form: None,
         }
     }
 
@@ -684,8 +709,139 @@ impl AppState {
     }
 
     /// Points the Export Configuration view at `id` (e.g. from the document browser).
+    /// Drops any working draft so the view re-reads the newly-selected config.
     pub fn select_export_config(&mut self, id: ExportConfigId) {
+        if self.selected_export_config != Some(id) {
+            self.export_form = None;
+        }
         self.selected_export_config = Some(id);
+    }
+
+    // --- Export Configuration view (spec/12 §12.11/§12.12). The view edits a working
+    // `ExportConfigForm`; Apply rebuilds the config from a scan preset and replaces it as
+    // one undo entry, preserving the config's ids so JSON/undo stay stable. ---
+
+    /// The working export-config draft, initializing it from the selected config the first
+    /// time (or after the selection moved). `None` when no config is selected.
+    pub fn export_form_mut(&mut self) -> Option<&mut ExportConfigForm> {
+        let id = self.selected_export_config()?;
+        let stale = self.export_form.as_ref().is_none_or(|f| f.config_id != id);
+        if stale {
+            let config = self
+                .active
+                .content
+                .export_configs
+                .iter()
+                .find(|config| config.id == id)?;
+            self.export_form = Some(form_from_config(config));
+        }
+        self.export_form.as_mut()
+    }
+
+    /// Discards the working draft, so the view re-reads the saved config on the next
+    /// frame. Called by the Revert button and whenever the document jumps under the draft
+    /// (undo/redo), so the form never lingers out of step with the config it edits.
+    pub fn reset_export_form(&mut self) {
+        self.export_form = None;
+    }
+
+    /// Whether the working draft differs from the saved config it edits — drives the
+    /// enabled state of Apply/Revert. `false` when there is no draft or it is in sync.
+    pub fn export_form_is_dirty(&self) -> bool {
+        let Some(form) = &self.export_form else {
+            return false;
+        };
+        let Some(config) = self
+            .active
+            .content
+            .export_configs
+            .iter()
+            .find(|config| config.id == form.config_id)
+        else {
+            return false;
+        };
+        *form != form_from_config(config)
+    }
+
+    /// Rebuilds the selected config from the working draft's parameters (a scan preset)
+    /// and replaces it as one undo entry (spec/07 §7.2). The config's own id and its
+    /// address/data component ids are preserved, so the edit is a clean in-place swap in
+    /// both the undo history and the JSON. A no-op if the draft's source glyph set no
+    /// longer resolves.
+    pub fn apply_export_form(&mut self) {
+        let Some(form) = self.export_form.clone() else {
+            return;
+        };
+        let Some(existing) = self
+            .active
+            .content
+            .export_configs
+            .iter()
+            .find(|config| config.id == form.config_id)
+            .cloned()
+        else {
+            return;
+        };
+        let rebuilt = {
+            let Some(glyph_set) = self.active.content.glyph_set(form.glyph_set_id) else {
+                self.set_error("Export source glyph set no longer exists");
+                return;
+            };
+            let pages: Vec<PageId> = glyph_set.pages.iter().map(|page| page.id).collect();
+            let mut config = match form.scan {
+                ScanDirection::Row => row_scan_config(
+                    self.ids.as_mut(),
+                    form.name,
+                    glyph_set,
+                    pages,
+                    form.code_bits,
+                ),
+                ScanDirection::Column => column_scan_config(
+                    self.ids.as_mut(),
+                    form.name,
+                    glyph_set,
+                    pages,
+                    form.code_bits,
+                ),
+            };
+            // Preserve identity so undo and the JSON diff stay minimal (the preset minted
+            // fresh ids we discard here).
+            config.id = existing.id;
+            config.address_map.id = existing.address_map.id;
+            config.data_map.id = existing.data_map.id;
+            config.description = existing.description.clone();
+            config
+        };
+        match replace_export_config(
+            &mut self.active.content,
+            &ReplaceExportConfig { config: rebuilt },
+        ) {
+            Ok(change_set) => {
+                self.record(change_set);
+                self.set_status("Updated export config");
+            }
+            Err(err) => self.set_error(format!("Update failed: {err}")),
+        }
+    }
+
+    /// Validates the **selected** export config against the document (spec/10 §10.7), for
+    /// the view's live 1:1 summary / diagnostic. `None` when nothing is selected; `Err`
+    /// when the source glyph set is missing or the config is not a strict 1:1 mapping.
+    pub fn validate_selected_export(&self) -> Option<Result<ExportSummary, ExportError>> {
+        let id = self.selected_export_config()?;
+        let config = self
+            .active
+            .content
+            .export_configs
+            .iter()
+            .find(|config| config.id == id)?;
+        let Some(glyph_set) = self.active.content.glyph_set(config.source.glyph_set_id) else {
+            return Some(Err(ExportError::NotStrictOneToOne {
+                config: config.name.clone(),
+                reason: "source glyph set is missing".to_string(),
+            }));
+        };
+        Some(validate_export(glyph_set, config, &Limits::default()))
     }
 
     /// Records a committed change to the **active** document on the undo stack
@@ -790,6 +946,8 @@ impl AppState {
                 document.dirty = true;
             }
             self.redo_stack.push((doc_id, change_set));
+            // The document jumped under any export-config draft; re-read it next frame.
+            self.export_form = None;
         }
     }
 
@@ -802,6 +960,7 @@ impl AppState {
                 document.dirty = true;
             }
             self.undo_stack.push((doc_id, change_set));
+            self.export_form = None; // re-read the draft after the document jumps
         }
     }
 
@@ -1261,6 +1420,55 @@ impl AppState {
     pub fn cancel_discard(&mut self) {
         self.pending_discard = None;
     }
+}
+
+/// Reads the editable high-level parameters back out of an export config (spec/12
+/// §12.11). Scan direction is classified from the **data map** — a row-scan emits each
+/// data bit from a fixed column of the addressed row (`y = AddressedY`), a column-scan
+/// from a fixed row of the addressed column (`x = AddressedX`) — which is robust even
+/// when the addressed axis is one pixel wide (then the address carries no pixel bit at
+/// all). `code_bits` is the count of `CodeBit` address lines. A config matching neither
+/// preset reads back as row-scan; Apply would then normalize it to a clean preset.
+fn form_from_config(config: &ExportConfig) -> ExportConfigForm {
+    let scan = scan_of(config);
+    let code_bits = config
+        .address_map
+        .address_bits
+        .iter()
+        .filter(|bit| matches!(bit, AddressBitSource::CodeBit(_)))
+        .count()
+        .min(u8::MAX as usize) as u8;
+    ExportConfigForm {
+        config_id: config.id,
+        name: config.name.clone(),
+        glyph_set_id: config.source.glyph_set_id,
+        scan,
+        code_bits,
+    }
+}
+
+/// Classifies a config's scan direction from its data map (see [`form_from_config`]): a
+/// data bit whose row tracks the addressed row (`y = AddressedY[Plus]`) is row-scan; one
+/// whose column tracks the addressed column (`x = AddressedX[Plus]`) is column-scan.
+/// Defaults to row-scan when no output bit resolves either way.
+fn scan_of(config: &ExportConfig) -> ScanDirection {
+    for bit in &config.data_map.output_bits {
+        if let OutputBitSource::Pixel { x, y } = bit {
+            if matches!(
+                y,
+                CoordinateExpr::AddressedY | CoordinateExpr::AddressedYPlus(_)
+            ) {
+                return ScanDirection::Row;
+            }
+            if matches!(
+                x,
+                CoordinateExpr::AddressedX | CoordinateExpr::AddressedXPlus(_)
+            ) {
+                return ScanDirection::Column;
+            }
+        }
+    }
+    ScanDirection::Row
 }
 
 /// A path's file name for display, falling back to the whole path.
@@ -2244,5 +2452,108 @@ mod tests {
         assert!(state.document().export_configs.is_empty());
         // The stale selection no longer resolves.
         assert_eq!(state.selected_export_config(), None);
+    }
+
+    #[test]
+    fn export_form_reads_back_the_selected_config() {
+        let mut state = editable_state();
+        state.add_export_config("ROM".to_string());
+        let source = state.selection().glyph_set_id;
+        let form = state.export_form_mut().expect("a config is selected");
+        assert_eq!(form.name, "ROM");
+        assert_eq!(form.scan, ScanDirection::Row); // add makes a row-scan config
+        assert_eq!(form.glyph_set_id, source);
+        // The starter charset tops out at 0x48, so 7 code bits cover it.
+        assert_eq!(form.code_bits, 7);
+        assert!(
+            !state.export_form_is_dirty(),
+            "fresh draft matches the config"
+        );
+    }
+
+    #[test]
+    fn apply_export_form_replaces_in_place_as_one_undo_entry() {
+        let mut state = editable_state();
+        state.add_export_config("ROM".to_string());
+        let id = state.selected_export_config().unwrap();
+
+        // Edit the draft; the config is untouched until Apply.
+        state.export_form_mut().unwrap().name = "ROM v2".to_string();
+        assert!(state.export_form_is_dirty());
+        assert_eq!(state.document().export_configs[0].name, "ROM");
+
+        state.apply_export_form();
+        assert_eq!(
+            state.document().export_configs.len(),
+            1,
+            "replace, not append"
+        );
+        assert_eq!(state.document().export_configs[0].name, "ROM v2");
+        assert_eq!(state.document().export_configs[0].id, id, "id preserved");
+        assert!(
+            !state.export_form_is_dirty(),
+            "draft back in sync after Apply"
+        );
+
+        // One undo reverts the rename; the config remains.
+        state.undo();
+        assert_eq!(state.document().export_configs[0].name, "ROM");
+        assert_eq!(state.document().export_configs[0].id, id);
+    }
+
+    #[test]
+    fn undo_resyncs_the_export_form() {
+        let mut state = editable_state();
+        state.add_export_config("ROM".to_string());
+        state.export_form_mut().unwrap().name = "ROM v2".to_string();
+        state.apply_export_form(); // saved config is now "ROM v2"
+
+        state.undo(); // reverts the rename
+        // The draft re-reads the reverted config rather than lingering on "ROM v2".
+        assert_eq!(state.export_form_mut().unwrap().name, "ROM");
+        assert!(!state.export_form_is_dirty());
+    }
+
+    #[test]
+    fn changing_scan_to_column_rebuilds_the_data_map() {
+        let mut state = editable_state();
+        state.add_export_config("ROM".to_string());
+        // Row-scan 8×8 → 8 data bits emitting columns of the addressed row.
+        state.export_form_mut().unwrap().scan = ScanDirection::Column;
+        state.apply_export_form();
+        // Read back: the config is now column-scan.
+        let form = state.export_form_mut().unwrap();
+        assert_eq!(form.scan, ScanDirection::Column);
+        // Still a valid 1:1 export in the other orientation.
+        assert!(state.validate_selected_export().unwrap().is_ok());
+    }
+
+    #[test]
+    fn validate_selected_export_reports_the_valid_starter_rom() {
+        let mut state = editable_state();
+        state.add_export_config("ROM".to_string());
+        let result = state
+            .validate_selected_export()
+            .expect("a config is selected");
+        assert!(
+            result.is_ok(),
+            "starter 8×8 row-scan is valid 1:1: {result:?}"
+        );
+    }
+
+    #[test]
+    fn selecting_a_different_config_reinitializes_the_draft() {
+        let mut state = editable_state();
+        state.add_export_config("First".to_string());
+        let first = state.selected_export_config().unwrap();
+        state.add_export_config("Second".to_string());
+        let second = state.selected_export_config().unwrap();
+        assert_ne!(first, second);
+
+        // The draft tracks "Second" now (add selected it).
+        assert_eq!(state.export_form_mut().unwrap().name, "Second");
+        // Switch back to the first; the draft re-reads it.
+        state.select_export_config(first);
+        assert_eq!(state.export_form_mut().unwrap().name, "First");
     }
 }

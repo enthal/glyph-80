@@ -13,6 +13,7 @@ use fontspace_model::{CharacterSetId, GlyphSize};
 use crate::charset_view::show_character_set;
 use crate::document_browser::show_document_browser;
 use crate::editor::show_glyph_editor;
+use crate::export_view::show_export_configuration;
 use crate::layout::{Pane, default_tree, panes_in};
 use crate::page_overview::show_page_overview;
 use crate::state::{AppState, GuardedIntent};
@@ -619,6 +620,7 @@ impl egui_tiles::Behavior<Pane> for PaneBehavior<'_> {
             Pane::PageOverview => show_page_overview(ui, self.state),
             Pane::CharacterSet => show_character_set(ui, self.state),
             Pane::TextPreview => show_text_preview(ui, self.state),
+            Pane::ExportConfiguration => show_export_configuration(ui, self.state),
             Pane::DocumentBrowser => show_document_browser(ui, self.state),
             other => placeholder(ui, *other),
         }
