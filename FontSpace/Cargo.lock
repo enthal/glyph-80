@@ -1338,6 +1338,7 @@ dependencies = [
  "egui",
  "egui_kittest",
  "egui_tiles",
+ "fontspace-export",
  "fontspace-json",
  "fontspace-model",
  "fontspace-ops",

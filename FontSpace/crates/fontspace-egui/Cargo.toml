@@ -16,6 +16,8 @@ fontspace-model = { path = "../fontspace-model" }
 fontspace-ops = { path = "../fontspace-ops" }
 fontspace-render = { path = "../fontspace-render" }
 fontspace-json = { path = "../fontspace-json" }
+# Scan-preset construction for the "Add Export Configuration" action (spec/10).
+fontspace-export = { path = "../fontspace-export" }
 # Runtime-only per-open-document identity (`DocumentId`, spec/11 §11.1), minted from
 # the injected `IdGen`. No `v4` feature — ids come from the generator, never ambient.
 uuid = "1"
