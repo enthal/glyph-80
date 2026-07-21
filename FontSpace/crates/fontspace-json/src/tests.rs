@@ -236,6 +236,18 @@ fn export_config_canonical_shape() {
 }
 
 #[test]
+fn unsupported_output_format_round_trips() {
+    let mut doc = export_doc();
+    doc.export_configs[0].output_format = OutputFormatConfig::Unsupported {
+        name: "intel_hex".into(),
+    };
+    let json = save(&doc);
+    assert!(json.contains("\"unsupported\": {"));
+    let reloaded = load(&json).unwrap().document;
+    assert_eq!(reloaded.export_configs, doc.export_configs);
+}
+
+#[test]
 fn export_golden_document_matches_file() {
     let json = save(&export_doc());
     let path = concat!(
