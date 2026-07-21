@@ -15,10 +15,10 @@ use fontspace_export::{
 };
 use fontspace_json::{LoadOutcome, load_fragment, save_fragment};
 use fontspace_model::{
-    AddressBitSource, Bitmap, CharacterEntry, CharacterSet, CharacterSetId, ExportConfig,
-    ExportConfigId, FontSpace, FontSpaceFragment, FragmentGlyph, Glyph, GlyphFragment, GlyphPage,
-    GlyphSet, GlyphSetId, GlyphSize, Guide, GuideAxis, GuideId, IdGen, Limits, OverflowPolicy,
-    PageId, RandomIdGen,
+    AddressBitSource, Bitmap, CharacterEntry, CharacterSet, CharacterSetId, CoordinateExpr,
+    ExportConfig, ExportConfigId, FontSpace, FontSpaceFragment, FragmentGlyph, Glyph,
+    GlyphFragment, GlyphPage, GlyphSet, GlyphSetId, GlyphSize, Guide, GuideAxis, GuideId, IdGen,
+    Limits, OutputBitSource, OverflowPolicy, PageId, RandomIdGen,
 };
 
 use fontspace_ops::{
@@ -738,8 +738,9 @@ impl AppState {
         self.export_form.as_mut()
     }
 
-    /// Discards the working draft, so the view re-reads the saved config (the Revert
-    /// button, and after an Apply/undo that should re-sync the form).
+    /// Discards the working draft, so the view re-reads the saved config on the next
+    /// frame. Called by the Revert button and whenever the document jumps under the draft
+    /// (undo/redo), so the form never lingers out of step with the config it edits.
     pub fn reset_export_form(&mut self) {
         self.export_form = None;
     }
@@ -945,6 +946,8 @@ impl AppState {
                 document.dirty = true;
             }
             self.redo_stack.push((doc_id, change_set));
+            // The document jumped under any export-config draft; re-read it next frame.
+            self.export_form = None;
         }
     }
 
@@ -957,6 +960,7 @@ impl AppState {
                 document.dirty = true;
             }
             self.undo_stack.push((doc_id, change_set));
+            self.export_form = None; // re-read the draft after the document jumps
         }
     }
 
@@ -1419,21 +1423,21 @@ impl AppState {
 }
 
 /// Reads the editable high-level parameters back out of an export config (spec/12
-/// §12.11). Scan direction is inferred from which pixel axis the address bits scan (a
-/// `PixelYBit` means row-scan, a `PixelXBit` column-scan); `code_bits` is the count of
-/// `CodeBit` address lines. A config with neither pixel axis (not a scan preset) reads
-/// back as row-scan — Apply would then normalize it to a clean preset.
+/// §12.11). Scan direction is classified from the **data map** — a row-scan emits each
+/// data bit from a fixed column of the addressed row (`y = AddressedY`), a column-scan
+/// from a fixed row of the addressed column (`x = AddressedX`) — which is robust even
+/// when the addressed axis is one pixel wide (then the address carries no pixel bit at
+/// all). `code_bits` is the count of `CodeBit` address lines. A config matching neither
+/// preset reads back as row-scan; Apply would then normalize it to a clean preset.
 fn form_from_config(config: &ExportConfig) -> ExportConfigForm {
-    let mut scan = ScanDirection::Row;
-    let mut code_bits: u8 = 0;
-    for bit in &config.address_map.address_bits {
-        match bit {
-            AddressBitSource::PixelYBit(_) => scan = ScanDirection::Row,
-            AddressBitSource::PixelXBit(_) => scan = ScanDirection::Column,
-            AddressBitSource::CodeBit(_) => code_bits = code_bits.saturating_add(1),
-            _ => {}
-        }
-    }
+    let scan = scan_of(config);
+    let code_bits = config
+        .address_map
+        .address_bits
+        .iter()
+        .filter(|bit| matches!(bit, AddressBitSource::CodeBit(_)))
+        .count()
+        .min(u8::MAX as usize) as u8;
     ExportConfigForm {
         config_id: config.id,
         name: config.name.clone(),
@@ -1441,6 +1445,30 @@ fn form_from_config(config: &ExportConfig) -> ExportConfigForm {
         scan,
         code_bits,
     }
+}
+
+/// Classifies a config's scan direction from its data map (see [`form_from_config`]): a
+/// data bit whose row tracks the addressed row (`y = AddressedY[Plus]`) is row-scan; one
+/// whose column tracks the addressed column (`x = AddressedX[Plus]`) is column-scan.
+/// Defaults to row-scan when no output bit resolves either way.
+fn scan_of(config: &ExportConfig) -> ScanDirection {
+    for bit in &config.data_map.output_bits {
+        if let OutputBitSource::Pixel { x, y } = bit {
+            if matches!(
+                y,
+                CoordinateExpr::AddressedY | CoordinateExpr::AddressedYPlus(_)
+            ) {
+                return ScanDirection::Row;
+            }
+            if matches!(
+                x,
+                CoordinateExpr::AddressedX | CoordinateExpr::AddressedXPlus(_)
+            ) {
+                return ScanDirection::Column;
+            }
+        }
+    }
+    ScanDirection::Row
 }
 
 /// A path's file name for display, falling back to the whole path.
@@ -2471,6 +2499,19 @@ mod tests {
         state.undo();
         assert_eq!(state.document().export_configs[0].name, "ROM");
         assert_eq!(state.document().export_configs[0].id, id);
+    }
+
+    #[test]
+    fn undo_resyncs_the_export_form() {
+        let mut state = editable_state();
+        state.add_export_config("ROM".to_string());
+        state.export_form_mut().unwrap().name = "ROM v2".to_string();
+        state.apply_export_form(); // saved config is now "ROM v2"
+
+        state.undo(); // reverts the rename
+        // The draft re-reads the reverted config rather than lingering on "ROM v2".
+        assert_eq!(state.export_form_mut().unwrap().name, "ROM");
+        assert!(!state.export_form_is_dirty());
     }
 
     #[test]

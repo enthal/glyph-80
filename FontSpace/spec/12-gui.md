@@ -112,6 +112,8 @@ Editable sample text, glyph-set/page selection, fg/bg colors, inversion, integer
 
 Selection-driven. **Glyph:** file, glyph set, page, `code`, label, geometry, on-pixel count, raw row bytes, common transforms. **Page:** name, description, index, guide list, glyph count, blank count. **Export config:** source binding, validation state, transforms, packing, address/data maps, image size, output format.
 
+**Interim: an Export Configuration editor tile.** Ahead of the full selection-driven inspector above, the selected export config is edited in its own tile: a form over its high-level parameters — name, source glyph set, **scan** direction (row/column), and **code bits** — with a live 1:1 **validation summary** (or diagnostic, §10.7 / spec/14 §14.4). **Apply** rebuilds the config from the matching scan preset (spec/07 §7.2, preserving the config's ids) as one undo entry; **Revert** re-reads the saved config. The page sequence is the source's pages in order (page-subset editing, the geometry-pipeline fields, and the logical-image / raw-bytes **export preview** are follow-ups). Configs are picked here by clicking one under “Export Configurations” in the document browser (§12.2).
+
 ## 12.12 Menus
 
 `File · Edit · View · Character Set · Glyph · Page · Export · Window · Help`. Core file actions: New, Open, Open Recent, Save, Save As, Close, Revert, Export, Recover Unsaved Work.
