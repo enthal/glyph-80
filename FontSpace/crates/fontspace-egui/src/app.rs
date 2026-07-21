@@ -8,6 +8,7 @@
 use std::path::{Path, PathBuf};
 
 use egui_tiles::{Tile, Tree};
+use fontspace_model::{CharacterSetId, GlyphSize};
 
 use crate::charset_view::show_character_set;
 use crate::document_browser::show_document_browser;
@@ -25,6 +26,18 @@ pub struct FontSpaceApp {
     /// actually changes. Sending one every frame would request a repaint every frame
     /// and the UI would never settle (breaking the snapshot harness's fixed-point run).
     last_title: String,
+    /// The in-progress "Add Glyph Set" dialog, when open (spec/12 §12.11). Transient UI
+    /// state, never persisted; `None` means the dialog is closed.
+    add_glyph_set_form: Option<GlyphSetForm>,
+}
+
+/// The inputs of the "Add Glyph Set" dialog (spec/12 §12.11): a name, a geometry, and
+/// the character set the new set references.
+struct GlyphSetForm {
+    name: String,
+    width: u16,
+    height: u16,
+    character_set: Option<CharacterSetId>,
 }
 
 impl Default for FontSpaceApp {
@@ -33,6 +46,7 @@ impl Default for FontSpaceApp {
             tree: default_tree(),
             state: AppState::default(),
             last_title: String::new(),
+            add_glyph_set_form: None,
         }
     }
 }
@@ -52,6 +66,7 @@ impl FontSpaceApp {
             tree: default_tree(),
             state,
             last_title: String::new(),
+            add_glyph_set_form: None,
         }
     }
 
@@ -154,6 +169,31 @@ impl FontSpaceApp {
                         ui.close();
                     }
                 });
+                // Create top-level document objects (spec/12 §12.11). The full menu
+                // taxonomy (File · … · Glyph · Page · Export · …) lands with the M4 menu
+                // system; until then these creators live under one "Insert" menu.
+                ui.menu_button("Insert", |ui| {
+                    let has_character_set = !self.state.document().character_sets.is_empty();
+                    if ui
+                        .add_enabled(has_character_set, egui::Button::new("Glyph Set..."))
+                        .clicked()
+                    {
+                        self.begin_add_glyph_set();
+                        ui.close();
+                    }
+                    let has_glyph_set = self
+                        .state
+                        .document()
+                        .glyph_set(self.state.selection().glyph_set_id)
+                        .is_some();
+                    if ui
+                        .add_enabled(has_glyph_set, egui::Button::new("Export Configuration"))
+                        .clicked()
+                    {
+                        self.action_add_export_config();
+                        ui.close();
+                    }
+                });
 
                 // The document name and unsaved marker, right-aligned in the bar.
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -166,6 +206,7 @@ impl FontSpaceApp {
         });
 
         self.show_discard_modal(ui.ctx());
+        self.show_add_glyph_set_modal(ui.ctx());
 
         // A one-line status strip for the last save/open result or error (spec/12
         // §12.12): only present when there is something to report.
@@ -213,6 +254,109 @@ impl FontSpaceApp {
             self.state.cancel_discard();
         } else if discard && let Some(intent) = self.state.take_pending_discard() {
             self.perform_guarded(intent);
+        }
+    }
+
+    /// Opens the "Add Glyph Set" dialog, prefilling a sensible default geometry and the
+    /// character set the current selection references (or the document's first).
+    fn begin_add_glyph_set(&mut self) {
+        let character_set = self
+            .state
+            .selected_character_set()
+            .map(|cs| cs.id)
+            .or_else(|| self.state.document().character_sets.first().map(|cs| cs.id));
+        self.add_glyph_set_form = Some(GlyphSetForm {
+            name: "New Glyph Set".to_string(),
+            width: 8,
+            height: 8,
+            character_set,
+        });
+    }
+
+    /// Adds a row-scan export config sourced from the selected glyph set, named for its
+    /// position (spec/12 §12.11). The Export Configuration view then refines it.
+    fn action_add_export_config(&mut self) {
+        let ordinal = self.state.document().export_configs.len() + 1;
+        self.state.add_export_config(format!("Export {ordinal}"));
+    }
+
+    /// The "Add Glyph Set" dialog (spec/12 §12.11): name, geometry, and character-set
+    /// picker. Only present when armed; the buttons set local flags so `self` is free to
+    /// mutate after the modal closure. "Add" invokes the `add_glyph_set` op (one undo
+    /// entry) and selects the new page.
+    fn show_add_glyph_set_modal(&mut self, ctx: &egui::Context) {
+        if self.add_glyph_set_form.is_none() {
+            return;
+        }
+        // Snapshot the character sets (id + name) before borrowing the form mutably, so
+        // the picker can list them without holding a borrow on `self.state`.
+        let character_sets: Vec<(CharacterSetId, String)> = self
+            .state
+            .document()
+            .character_sets
+            .iter()
+            .map(|cs| (cs.id, cs.name.clone()))
+            .collect();
+        let mut submit = false;
+        let mut cancel = false;
+        let form = self
+            .add_glyph_set_form
+            .as_mut()
+            .expect("form is Some (checked above)");
+        let modal = egui::Modal::new(egui::Id::new("add_glyph_set")).show(ctx, |ui| {
+            ui.set_width(320.0);
+            ui.heading("Add glyph set");
+            ui.add_space(8.0);
+            egui::Grid::new("add_glyph_set_grid")
+                .num_columns(2)
+                .spacing([8.0, 6.0])
+                .show(ui, |ui| {
+                    ui.label("Name");
+                    ui.text_edit_singleline(&mut form.name);
+                    ui.end_row();
+                    ui.label("Width");
+                    ui.add(egui::DragValue::new(&mut form.width).range(1..=64));
+                    ui.end_row();
+                    ui.label("Height");
+                    ui.add(egui::DragValue::new(&mut form.height).range(1..=64));
+                    ui.end_row();
+                    ui.label("Character set");
+                    let selected = form
+                        .character_set
+                        .and_then(|id| character_sets.iter().find(|(cid, _)| *cid == id))
+                        .map(|(_, name)| name.clone())
+                        .unwrap_or_else(|| "—".to_string());
+                    egui::ComboBox::from_id_salt("add_glyph_set_charset")
+                        .selected_text(selected)
+                        .show_ui(ui, |ui| {
+                            for (id, name) in &character_sets {
+                                ui.selectable_value(&mut form.character_set, Some(*id), name);
+                            }
+                        });
+                    ui.end_row();
+                });
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                if ui.button("Cancel").clicked() {
+                    cancel = true;
+                }
+                let can_add = form.character_set.is_some() && !form.name.trim().is_empty();
+                if ui.add_enabled(can_add, egui::Button::new("Add")).clicked() {
+                    submit = true;
+                }
+            });
+        });
+        if cancel || modal.should_close() {
+            self.add_glyph_set_form = None;
+        } else if submit
+            && let Some(form) = self.add_glyph_set_form.take()
+            && let Some(character_set) = form.character_set
+        {
+            self.state.add_glyph_set(
+                form.name,
+                GlyphSize::new(form.width, form.height),
+                character_set,
+            );
         }
     }
 

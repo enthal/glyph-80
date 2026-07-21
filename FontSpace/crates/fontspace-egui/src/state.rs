@@ -10,19 +10,21 @@
 
 use std::path::{Path, PathBuf};
 
+use fontspace_export::row_scan_config;
 use fontspace_json::{LoadOutcome, load_fragment, save_fragment};
 use fontspace_model::{
-    Bitmap, CharacterEntry, CharacterSet, CharacterSetId, FontSpace, FontSpaceFragment,
-    FragmentGlyph, Glyph, GlyphFragment, GlyphPage, GlyphSet, GlyphSetId, GlyphSize, Guide,
-    GuideAxis, GuideId, IdGen, OverflowPolicy, PageId, RandomIdGen,
+    Bitmap, CharacterEntry, CharacterSet, CharacterSetId, ExportConfigId, FontSpace,
+    FontSpaceFragment, FragmentGlyph, Glyph, GlyphFragment, GlyphPage, GlyphSet, GlyphSetId,
+    GlyphSize, Guide, GuideAxis, GuideId, IdGen, OverflowPolicy, PageId, RandomIdGen,
 };
 
 use fontspace_ops::{
-    AddGuide, ChangeSet, ClearGlyphs, FontSpaceWarning, GlyphMapping, GlyphRef, GlyphSelector,
-    GlyphSizeConversion, InvertGlyphs, MoveGuide, PageSelector, PasteGlyphs, RemoveCharacterEntry,
-    RemoveGuide, RenameGuide, SetGuideVisible, SetPixels, ShiftGlyphs, add_guide, apply_change_set,
-    clear_glyphs, invert_glyphs, move_guide, paste_glyphs, remove_character_entry, remove_guide,
-    rename_guide, set_guide_visible, set_pixels, shift_glyphs, undo,
+    AddExportConfig, AddGlyphSet, AddGuide, ChangeSet, ClearGlyphs, FontSpaceWarning, GlyphMapping,
+    GlyphRef, GlyphSelector, GlyphSizeConversion, InvertGlyphs, MoveGuide, PageSelector,
+    PasteGlyphs, RemoveCharacterEntry, RemoveGuide, RenameGuide, SetGuideVisible, SetPixels,
+    ShiftGlyphs, add_export_config, add_glyph_set, add_guide, apply_change_set, clear_glyphs,
+    invert_glyphs, move_guide, paste_glyphs, remove_character_entry, remove_guide, rename_guide,
+    set_guide_visible, set_pixels, shift_glyphs, undo,
 };
 
 use crate::editor::geometry::GridLevel;
@@ -123,6 +125,10 @@ pub struct AppState {
     /// (`OverflowPolicy::Wrap`) rather than discarding them (spec/12 §12.3). UI state;
     /// default off, matching the CLI `shift` default. Wrap rotates rows/columns.
     pub shift_wrap: bool,
+    /// The export config the Export Configuration view edits (spec/12 §12.11), or
+    /// `None` when none is selected. UI state; set when one is created or picked in the
+    /// document browser, cleared if it no longer resolves.
+    selected_export_config: Option<ExportConfigId>,
 }
 
 impl Default for AppState {
@@ -160,6 +166,7 @@ impl AppState {
             page_selection_anchor: None,
             glyph_fragment_clipboard: None,
             shift_wrap: false,
+            selected_export_config: None,
         }
     }
 
@@ -575,6 +582,107 @@ impl AppState {
         if let Ok(change_set) = shift_glyphs(&mut self.active.content, &request) {
             self.record(change_set);
         }
+    }
+
+    // --- Creating top-level objects (spec/07 §7.2, spec/12 §12.11). The menu gathers
+    // the parameters; these build and invoke the domain op, record it for undo, and
+    // point the UI at the result. ---
+
+    /// Adds a glyph set of `glyph_size` referencing `character_set_id`, with one
+    /// "Regular" page, as one undo entry (spec/07 §7.2); then selects the new page so
+    /// the editor shows it. A dangling character-set reference leaves the document
+    /// unchanged and reports the error (atomicity, spec/07 §7.6).
+    pub fn add_glyph_set(
+        &mut self,
+        name: String,
+        glyph_size: GlyphSize,
+        character_set_id: CharacterSetId,
+    ) {
+        let request = AddGlyphSet {
+            name,
+            description: String::new(),
+            glyph_size,
+            character_set_id,
+            initial_page_name: Some("Regular".to_string()),
+        };
+        match add_glyph_set(&mut self.active.content, &request, self.ids.as_mut()) {
+            Ok(change_set) => {
+                self.record(change_set);
+                if let Some(glyph_set) = self.active.content.glyph_sets.last() {
+                    let glyph_set_id = glyph_set.id;
+                    if let Some(page_id) = glyph_set.pages.first().map(|page| page.id) {
+                        self.select_page(glyph_set_id, page_id);
+                    }
+                }
+                self.set_status("Added glyph set");
+            }
+            Err(err) => self.set_error(format!("Add glyph set failed: {err}")),
+        }
+    }
+
+    /// Adds a standard **row-scan** export config sourced from the selected glyph set —
+    /// all its pages, in order — as one undo entry (spec/07 §7.2, spec/10), then selects
+    /// it for the Export Configuration view. The config is a starting point the export
+    /// editor refines; `code_bits` defaults to cover the character set's codes. A no-op
+    /// with an error if no glyph set is selected.
+    pub fn add_export_config(&mut self, name: String) {
+        let code_bits = self.default_code_bits();
+        let Some(glyph_set) = self
+            .active
+            .content
+            .glyph_set(self.active.selection.glyph_set_id)
+            .cloned()
+        else {
+            self.set_error("Select a glyph set before adding an export config");
+            return;
+        };
+        let pages: Vec<PageId> = glyph_set.pages.iter().map(|page| page.id).collect();
+        let config = row_scan_config(self.ids.as_mut(), name, &glyph_set, pages, code_bits);
+        let id = config.id;
+        match add_export_config(&mut self.active.content, &AddExportConfig { config }) {
+            Ok(change_set) => {
+                self.record(change_set);
+                self.selected_export_config = Some(id);
+                self.set_status("Added export config");
+            }
+            Err(err) => self.set_error(format!("Add export config failed: {err}")),
+        }
+    }
+
+    /// Bits to address every code in the selected character set (the ROM's code
+    /// dimension), at least 1 and capped at 24 (the address-width limit, spec/16). Falls
+    /// back to 7 (the 128-code ASCII range) when no character set resolves.
+    fn default_code_bits(&self) -> u8 {
+        let Some(max_code) = self
+            .selected_character_set()
+            .and_then(|cs| cs.entries.iter().map(|entry| entry.code).max())
+        else {
+            return 7;
+        };
+        let count = max_code.saturating_add(1);
+        let bits = if count <= 1 {
+            1
+        } else {
+            u32::BITS - (count - 1).leading_zeros()
+        };
+        bits.clamp(1, 24) as u8
+    }
+
+    /// The export config the Export Configuration view edits (spec/12 §12.11), or `None`
+    /// when none is selected or the selection no longer resolves.
+    pub fn selected_export_config(&self) -> Option<ExportConfigId> {
+        self.selected_export_config.filter(|id| {
+            self.active
+                .content
+                .export_configs
+                .iter()
+                .any(|config| config.id == *id)
+        })
+    }
+
+    /// Points the Export Configuration view at `id` (e.g. from the document browser).
+    pub fn select_export_config(&mut self, id: ExportConfigId) {
+        self.selected_export_config = Some(id);
     }
 
     /// Records a committed change to the **active** document on the undo stack
@@ -2089,5 +2197,49 @@ mod tests {
         assert!(!state.begin_guarded(GuardedIntent::Close));
         assert_eq!(state.pending_discard(), Some(GuardedIntent::Close));
         assert_eq!(state.open_document_count(), 2); // nothing closed yet
+    }
+
+    #[test]
+    fn add_glyph_set_creates_a_page_selects_it_and_undoes() {
+        let mut state = editable_state();
+        let character_set = state.selected_character_set().unwrap().id;
+        let before = state.document().glyph_sets.len();
+
+        state.add_glyph_set(
+            "Terminal 8x16".to_string(),
+            GlyphSize::new(8, 16),
+            character_set,
+        );
+        assert_eq!(state.document().glyph_sets.len(), before + 1);
+        let added = state.document().glyph_sets.last().unwrap();
+        assert_eq!(added.name, "Terminal 8x16");
+        assert_eq!(added.glyph_size, GlyphSize::new(8, 16));
+        assert_eq!(added.pages.len(), 1, "created with its Regular page");
+        // The selection followed the new set.
+        assert_eq!(state.selection().glyph_set_id, added.id);
+        assert!(state.is_dirty());
+
+        state.undo();
+        assert_eq!(state.document().glyph_sets.len(), before);
+    }
+
+    #[test]
+    fn add_export_config_appends_selects_and_undoes() {
+        let mut state = editable_state();
+        assert!(state.document().export_configs.is_empty());
+
+        state.add_export_config("Text ROM".to_string());
+        assert_eq!(state.document().export_configs.len(), 1);
+        let added = state.document().export_configs.last().unwrap();
+        assert_eq!(added.name, "Text ROM");
+        // Sourced from the selected glyph set.
+        assert_eq!(added.source.glyph_set_id, state.selection().glyph_set_id);
+        assert_eq!(state.selected_export_config(), Some(added.id));
+        assert!(state.is_dirty());
+
+        state.undo();
+        assert!(state.document().export_configs.is_empty());
+        // The stale selection no longer resolves.
+        assert_eq!(state.selected_export_config(), None);
     }
 }
