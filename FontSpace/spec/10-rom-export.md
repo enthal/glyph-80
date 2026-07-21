@@ -118,11 +118,10 @@ D0 = pixel x=7 at addressed row
 ## 10.6 Logical evaluation
 
 ```rust
-pub fn evaluate_output_word(source: &GlyphSet, config: &ExportConfig, address: u64)
-    -> Result<u64, ExportError>;
+pub fn evaluate_output_word(source: &GlyphSet, config: &ExportConfig, address: u64) -> u64;
 ```
 
-For each output address: decode address bits into logical coordinates (code, page, addressed x/y); select the page and the glyph for that code (blank if absent); evaluate each output bit against the glyph; assemble the word; place it into the logical memory image. File encoding is a separate, later stage (§10.9).
+For each output address: decode address bits into logical coordinates (code, page, addressed x/y); select the page and the glyph for that code (blank if absent); evaluate each output bit against the glyph; assemble the word (bit `i` = `data_map.output_bits[i]`, i.e. `Di`); place it into the logical memory image. Evaluation is **infallible** — a missing page, a missing glyph, or an out-of-glyph pixel simply reads off — so all failure is caught up front by the validator (§10.7), not per-address. `generate_image(source, config, limits)` produces the dense image (one word per address over `2^address_bits`) and is fallible only on the size/width limits (chapter 16). File encoding is a separate, later stage (§10.9).
 
 ## 10.7 Coverage validation
 
@@ -141,6 +140,8 @@ Export config "AT28C64 Text ROM" cannot be rendered:
 glyph width is 16 but the data map has 8 output bits.
 Add a split or packing transform when that feature is available.
 ```
+
+**Implemented (Milestone 5, `fontspace-export::validate_export`).** v1 validates the row-scan and column-scan strict-1:1 shapes: every address line must be a plain dimension bit (no `Constant`/`Inverted` in the address); **exactly one** pixel axis is addressed (`pixel_y` → row-scan, `pixel_x` → column-scan) and the other axis is emitted by the data bits, so no pixel dimension appears in both maps; each dimension's bits must partition it (contiguous `0..N`, no gap or duplicate) and cover the glyph/page/code extents; and the data map must be exactly one glyph pixel per data bit at the addressed line, together a permutation of `0..width` (row-scan) or `0..height` (column-scan). A `validate_export` success returns an [`ExportSummary`] whose `Display` is the summary above. The general `AddressBitSource`/`OutputBitSource` types still permit richer maps; those are simply not 1:1 and are rejected with a reason.
 
 ## 10.8 Future geometry pipeline (not v1)
 
