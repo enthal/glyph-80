@@ -5,7 +5,8 @@
 //! change variants join [`ObjectChange`] in the later operation slices.
 
 use fontspace_model::{
-    Bitmap, CharacterEntry, CharacterSetId, GlyphPage, GlyphSetId, Guide, GuideId, PageId,
+    Bitmap, CharacterEntry, CharacterSetId, ExportConfig, GlyphPage, GlyphSet, GlyphSetId, Guide,
+    GuideId, PageId,
 };
 
 /// The invertible result of one operation. Empty when the operation was a no-op.
@@ -49,6 +50,13 @@ pub enum ObjectChange {
     GlyphRemoved(GlyphPlacement),
     /// A whole glyph inserted at an index — the inverse of `GlyphRemoved`.
     GlyphInserted(GlyphPlacement),
+    /// A top-level glyph set added, removed, or replaced (spec/07 §7.7). `before = None`
+    /// is an add, `after = None` a remove, both `Some` a replace. Boxed: a whole glyph
+    /// set is far larger than the other variants (it carries every page and glyph).
+    GlyphSetChanged(Box<GlyphSetChange>),
+    /// A top-level export config added, removed, or replaced (spec/07 §7.7). Same
+    /// add/remove/replace convention as [`GlyphSetChange`]; boxed for the same reason.
+    ExportConfigChanged(Box<ExportConfigChange>),
 }
 
 impl ObjectChange {
@@ -65,6 +73,55 @@ impl ObjectChange {
             }
             ObjectChange::GlyphRemoved(placement) => ObjectChange::GlyphInserted(placement.clone()),
             ObjectChange::GlyphInserted(placement) => ObjectChange::GlyphRemoved(placement.clone()),
+            ObjectChange::GlyphSetChanged(change) => {
+                ObjectChange::GlyphSetChanged(Box::new(change.inverted()))
+            }
+            ObjectChange::ExportConfigChanged(change) => {
+                ObjectChange::ExportConfigChanged(Box::new(change.inverted()))
+            }
+        }
+    }
+}
+
+/// A top-level glyph set added, removed, or replaced (spec/07 §7.7). `before = None`
+/// is an add, `after = None` a remove, both `Some` a replace/edit. `index` is the
+/// glyph set's position in the document's `glyph_sets` vector, so re-insert (an add,
+/// or the undo of a remove) restores it exactly — glyph-set order is document
+/// identity (it round-trips through canonical JSON). Add/remove/edit are matched by
+/// the glyph set's own `id`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GlyphSetChange {
+    pub index: usize,
+    pub before: Option<GlyphSet>,
+    pub after: Option<GlyphSet>,
+}
+
+impl GlyphSetChange {
+    fn inverted(&self) -> GlyphSetChange {
+        GlyphSetChange {
+            index: self.index,
+            before: self.after.clone(),
+            after: self.before.clone(),
+        }
+    }
+}
+
+/// A top-level export config added, removed, or replaced (spec/07 §7.7). Same
+/// `index` / `before` / `after` convention as [`GlyphSetChange`]; matched by the
+/// config's own `id`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExportConfigChange {
+    pub index: usize,
+    pub before: Option<ExportConfig>,
+    pub after: Option<ExportConfig>,
+}
+
+impl ExportConfigChange {
+    fn inverted(&self) -> ExportConfigChange {
+        ExportConfigChange {
+            index: self.index,
+            before: self.after.clone(),
+            after: self.before.clone(),
         }
     }
 }

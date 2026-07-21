@@ -42,7 +42,9 @@ pub enum FontCommand {
     RemoveCharacterEntry(RemoveCharacterEntry),   // cascade-deletes referencing glyphs
     ReorderCharacterEntries(ReorderCharacterEntries),
     RecodeCharacterEntry(RecodeCharacterEntry),   // may orphan glyphs; warns
-    AddExportConfig(AddExportConfig),
+    AddGlyphSet(AddGlyphSet),                     // new top-level glyph set (optionally with a first page)
+    AddExportConfig(AddExportConfig),             // insert an already-built export config
+    ReplaceExportConfig(ReplaceExportConfig),     // swap a whole config in place, matched by id
     ReplaceExportComponent(ReplaceExportComponent),
 }
 
@@ -135,9 +137,14 @@ pub enum ObjectChange {
     PagesReordered(PagesReorder),     // before/after page-id order; inverse swaps them
     GuideChanged(GuideChange),        // add/move/edit/remove; carries the guide's index so remove's inverse re-inserts at its position
     CharacterSetChanged(CharacterSetChange),
-    ExportConfigChanged(ExportConfigChange),
+    GlyphSetChanged(GlyphSetChange),        // add/remove/replace a top-level glyph set
+    ExportConfigChanged(ExportConfigChange),// add/remove/replace a top-level export config
 }
+```
 
+`GlyphSetChanged` and `ExportConfigChanged` share the guide-change shape — `{ index, before: Option<T>, after: Option<T> }` — where `before = None` is an add, `after = None` a remove, and both `Some` a replace; the object is matched by its own stable `id`, and `index` records its position in the document vector so an add (or the undo of a remove) restores object order exactly (order is document identity — it round-trips through canonical JSON). `AddGlyphSet` mints the set's id (and its first page's id, when one is requested) and rejects a dangling character-set reference before mutating. `AddExportConfig`/`ReplaceExportConfig` take an already-constructed `ExportConfig` (the caller builds it — e.g. from a scan preset in `fontspace-export`), so these ops own only the document-level insert/replace and its invertible record.
+
+```rust
 pub struct GlyphChange {
     pub glyph_set_id: GlyphSetId,
     pub page_id: PageId,

@@ -15,6 +15,7 @@ mod error;
 mod fragment_ops;
 mod glyph_ops;
 mod guide_ops;
+mod object_ops;
 mod page_ops;
 mod selector;
 mod util;
@@ -26,8 +27,9 @@ use fontspace_model::{
 };
 
 pub use change_set::{
-    CascadedGlyph, ChangeSet, CharacterSetChange, FontSpaceWarning, GlyphChange, GlyphPlacement,
-    GuideChange, ObjectChange, OrphanedGlyph, PageChange, PagesReorder,
+    CascadedGlyph, ChangeSet, CharacterSetChange, ExportConfigChange, FontSpaceWarning,
+    GlyphChange, GlyphPlacement, GlyphSetChange, GuideChange, ObjectChange, OrphanedGlyph,
+    PageChange, PagesReorder,
 };
 pub use char_set_ops::{
     AddCharacterEntry, RecodeCharacterEntry, RemoveCharacterEntry, ReorderCharacterEntries,
@@ -44,6 +46,10 @@ pub use glyph_ops::{
 pub use guide_ops::{
     AddGuide, CopyGuideToPages, MoveGuide, RemoveGuide, RenameGuide, SetGuideVisible, add_guide,
     copy_guide_to_pages, move_guide, remove_guide, rename_guide, set_guide_visible,
+};
+pub use object_ops::{
+    AddExportConfig, AddGlyphSet, ReplaceExportConfig, add_export_config, add_glyph_set,
+    replace_export_config,
 };
 pub use page_ops::{AddPage, RemovePages, ReorderPages, add_page, remove_pages, reorder_pages};
 pub use selector::{GlyphSelector, PageSelector, resolve_glyph_codes_in, resolve_pages_in};
@@ -65,6 +71,8 @@ pub fn apply_change_set(doc: &mut FontSpace, change_set: &ChangeSet) -> Result<(
             ObjectChange::CharacterSetChanged(change) => apply_character_set_change(doc, change)?,
             ObjectChange::GlyphRemoved(placement) => apply_glyph_remove(doc, placement)?,
             ObjectChange::GlyphInserted(placement) => apply_glyph_insert(doc, placement)?,
+            ObjectChange::GlyphSetChanged(change) => apply_glyph_set_change(doc, change)?,
+            ObjectChange::ExportConfigChanged(change) => apply_export_config_change(doc, change)?,
         }
     }
     Ok(())
@@ -189,6 +197,51 @@ fn apply_character_set_change(
 ) -> Result<(), FontSpaceError> {
     let character_set = character_set_mut(doc, change.character_set_id)?;
     character_set.entries = change.after.clone();
+    Ok(())
+}
+
+/// Adds, replaces, or removes a top-level glyph set. `after = Some` edits the set with
+/// the matching id in place, or re-inserts it at `index` (an add, or the undo of a
+/// remove); `after = None` removes it by id (spec/07 §7.7).
+fn apply_glyph_set_change(
+    doc: &mut FontSpace,
+    change: &GlyphSetChange,
+) -> Result<(), FontSpaceError> {
+    match &change.after {
+        Some(glyph_set) => match doc.glyph_sets.iter_mut().find(|gs| gs.id == glyph_set.id) {
+            Some(existing) => *existing = glyph_set.clone(),
+            None => doc
+                .glyph_sets
+                .insert(change.index.min(doc.glyph_sets.len()), glyph_set.clone()),
+        },
+        None => {
+            if let Some(before) = &change.before {
+                doc.glyph_sets.retain(|gs| gs.id != before.id);
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Adds, replaces, or removes a top-level export config, mirroring
+/// [`apply_glyph_set_change`] (spec/07 §7.7).
+fn apply_export_config_change(
+    doc: &mut FontSpace,
+    change: &ExportConfigChange,
+) -> Result<(), FontSpaceError> {
+    match &change.after {
+        Some(config) => match doc.export_configs.iter_mut().find(|c| c.id == config.id) {
+            Some(existing) => *existing = config.clone(),
+            None => doc
+                .export_configs
+                .insert(change.index.min(doc.export_configs.len()), config.clone()),
+        },
+        None => {
+            if let Some(before) = &change.before {
+                doc.export_configs.retain(|c| c.id != before.id);
+            }
+        }
+    }
     Ok(())
 }
 
