@@ -19,7 +19,11 @@ pub struct ExportConfig {
 }
 ```
 
-A config must not permanently depend on an in-memory document ID; the workspace binds a config to an open glyph set at runtime (chapter 11).
+A config must not permanently depend on an in-memory document ID; the workspace binds a config to an open glyph set at runtime (chapter 11). It **is** file-stable through the persisted `GlyphSetId` and page ids in `source` (spec/10 §10.4), never a runtime `DocumentId`.
+
+**Implemented subset (Milestone 5, v1).** The persisted type carries the four strict-1:1 fields — `source`, `address_map`, `data_map`, and `output_format` — plus identity/naming. The geometry-pipeline fields (`transforms`, `packing`, `memory_image` — §10.8) are **not yet represented**; they extend the struct in a later slice through serde defaults (no migration, since a config without them is a valid 1:1 config). Until `transforms` exists, the §10.3 "`transforms.is_empty()`" constraint is satisfied trivially.
+
+**Wire form** (canonical JSON, spec/06). `source` is `{glyph_set_id, pages: [page-id, …]}` — page `n` in an `AddressBitSource::PageBit(n)` indexes `pages`. Each address/data bit is an externally-tagged, snake_case object: `{"pixel_y": 0}`, `{"code": 5}`, `{"page": 0}`, `{"constant": true}`, `{"inverted": {…}}` for address lines; `{"pixel": {"x": …, "y": …}}`, `{"constant": false}`, `{"inverted": {…}}` for data bits, where a coordinate is a unit string (`"addressed_x"`, `"addressed_y"`) or a tagged object (`{"constant": 3}`, `{"addressed_x_plus": 1}`, `{"addressed_y_plus": -1}`). `output_format` is `"raw_binary"` or `{"unsupported": {"name": "…"}}`. See `crates/fontspace-json/testdata/export.fontspace.json` for a full canonical example.
 
 ## 10.2 The addressing model: address by `code`
 

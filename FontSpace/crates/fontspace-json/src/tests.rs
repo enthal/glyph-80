@@ -3,8 +3,10 @@
 //! and their JSON are byte-for-byte reproducible.
 
 use fontspace_model::{
-    Bitmap, CharacterEntry, CharacterSet, FontSpace, Glyph, GlyphPage, GlyphSet, GlyphSize, Guide,
-    GuideAxis, GuideId, SequentialIdGen, ValidationWarning,
+    AddressBitSource, AddressMap, Bitmap, CharacterEntry, CharacterSet, CoordinateExpr, DataMap,
+    ExportComponentId, ExportConfig, ExportConfigId, ExportSourceSpec, FontSpace, Glyph, GlyphPage,
+    GlyphSet, GlyphSize, Guide, GuideAxis, GuideId, Limits, OutputBitSource, OutputFormatConfig,
+    SequentialIdGen, ValidationWarning,
 };
 use proptest::prelude::*;
 use serde_json::json;
@@ -138,6 +140,147 @@ fn save_load_save_is_byte_identical() {
     let reloaded = load(&once).unwrap().document;
     let twice = save(&reloaded);
     assert_eq!(once, twice, "save(load(save(d))) must equal save(d)");
+}
+
+/// A document carrying an export config (spec/10) that exercises **every** address-bit
+/// source (constant/code/page/pixel-x/pixel-y/inverted), coordinate expression, and
+/// output-bit source, so the round-trip covers the whole schema.
+fn export_doc() -> FontSpace {
+    let mut ids = SequentialIdGen::new();
+    let character_set = CharacterSet::new(&mut ids, "codes", "");
+    let size = GlyphSize::new(8, 8);
+    let mut glyph_set = GlyphSet::new(&mut ids, "Terminal 8x8", "", size, character_set.id);
+    let page = GlyphPage::new(&mut ids, "Regular", "");
+    let page_id = page.id;
+    let glyph_set_id = glyph_set.id;
+    glyph_set.pages.push(page);
+
+    let export_config = ExportConfig {
+        id: ExportConfigId::new(&mut ids),
+        name: "Tiny Text ROM".into(),
+        description: "exercises the schema".into(),
+        source: ExportSourceSpec {
+            glyph_set_id,
+            pages: vec![page_id],
+        },
+        address_map: AddressMap {
+            id: ExportComponentId::new(&mut ids),
+            name: "addr".into(),
+            address_bits: vec![
+                AddressBitSource::PixelYBit(0),
+                AddressBitSource::PixelYBit(1),
+                AddressBitSource::PixelYBit(2),
+                AddressBitSource::PixelXBit(0),
+                AddressBitSource::CodeBit(0),
+                AddressBitSource::CodeBit(1),
+                AddressBitSource::PageBit(0),
+                AddressBitSource::Constant(true),
+                AddressBitSource::Inverted(Box::new(AddressBitSource::CodeBit(2))),
+            ],
+        },
+        data_map: DataMap {
+            id: ExportComponentId::new(&mut ids),
+            name: "data".into(),
+            output_bits: vec![
+                OutputBitSource::Pixel {
+                    x: CoordinateExpr::AddressedX,
+                    y: CoordinateExpr::AddressedY,
+                },
+                OutputBitSource::Pixel {
+                    x: CoordinateExpr::AddressedXPlus(1),
+                    y: CoordinateExpr::AddressedYPlus(-1),
+                },
+                OutputBitSource::Constant(false),
+                OutputBitSource::Inverted(Box::new(OutputBitSource::Pixel {
+                    x: CoordinateExpr::Constant(0),
+                    y: CoordinateExpr::AddressedY,
+                })),
+            ],
+        },
+        output_format: OutputFormatConfig::RawBinary,
+    };
+
+    let mut doc = FontSpace::new(&mut ids, "Export", "document with an export config");
+    doc.character_sets.push(character_set);
+    doc.glyph_sets.push(glyph_set);
+    doc.export_configs.push(export_config);
+    doc
+}
+
+#[test]
+fn export_config_round_trips_byte_stable_and_equal() {
+    let once = save(&export_doc());
+    let reloaded = load(&once).unwrap().document;
+    // The loaded config equals the original (all nested enums survive), and a second
+    // save is byte-identical (canonical).
+    assert_eq!(reloaded.export_configs, export_doc().export_configs);
+    assert_eq!(
+        save(&reloaded),
+        once,
+        "save(load(save(d))) must equal save(d)"
+    );
+}
+
+#[test]
+fn export_config_canonical_shape() {
+    let json = save(&export_doc());
+    // Address bits: short snake_case tags, inversion nests.
+    assert!(json.contains("\"pixel_y\": 0"));
+    assert!(json.contains("\"code\": 1"));
+    assert!(json.contains("\"inverted\": {"));
+    // Data bits: pixel with coordinate exprs (unit variant as a string, plus tagged).
+    assert!(json.contains("\"addressed_x\""));
+    assert!(json.contains("\"addressed_x_plus\": 1"));
+    // Output format.
+    assert!(json.contains("\"output_format\": \"raw_binary\""));
+}
+
+#[test]
+fn unsupported_output_format_round_trips() {
+    let mut doc = export_doc();
+    doc.export_configs[0].output_format = OutputFormatConfig::Unsupported {
+        name: "intel_hex".into(),
+    };
+    let json = save(&doc);
+    assert!(json.contains("\"unsupported\": {"));
+    let reloaded = load(&json).unwrap().document;
+    assert_eq!(reloaded.export_configs, doc.export_configs);
+}
+
+#[test]
+fn export_golden_document_matches_file() {
+    let json = save(&export_doc());
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/testdata/export.fontspace.json"
+    );
+    if std::env::var("UPDATE_GOLDEN").is_ok() {
+        std::fs::write(path, &json).expect("write golden");
+    }
+    let expected =
+        std::fs::read_to_string(path).expect("golden file missing; run with UPDATE_GOLDEN=1");
+    assert_eq!(
+        json, expected,
+        "export canonical output drifted from golden"
+    );
+}
+
+#[test]
+fn duplicate_export_component_id_is_a_validation_error() {
+    use fontspace_model::ValidationError;
+    let mut doc = export_doc();
+    // Force the data map's component id to collide with the address map's.
+    let clash = doc.export_configs[0].address_map.id;
+    doc.export_configs[0].data_map.id = clash;
+    let report = doc.validate(&Limits::default());
+    assert!(
+        report
+            .errors
+            .iter()
+            .any(|e| matches!(e, ValidationError::DuplicateExportComponentId(id) if *id == clash)),
+        "expected a duplicate-component-id error, got {:?}",
+        report.errors
+    );
 }
 
 #[test]
