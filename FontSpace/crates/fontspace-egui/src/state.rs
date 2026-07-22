@@ -62,6 +62,10 @@ pub struct ExportConfigForm {
     pub glyph_set_id: GlyphSetId,
     pub scan: ScanDirection,
     pub code_bits: u8,
+    /// Target output size in bytes, or `None` for the natural size (spec/10 §10.9).
+    pub output_size: Option<u32>,
+    /// Padding byte for [`output_size`](Self::output_size).
+    pub fill_byte: u8,
 }
 
 /// A file action that would discard the active document's unsaved edits, held pending
@@ -811,6 +815,8 @@ impl AppState {
             config.address_map.id = existing.address_map.id;
             config.data_map.id = existing.data_map.id;
             config.description = existing.description.clone();
+            config.output_size = form.output_size;
+            config.fill_byte = form.fill_byte;
             config
         };
         match replace_export_config(
@@ -1471,6 +1477,8 @@ fn form_from_config(config: &ExportConfig) -> ExportConfigForm {
         glyph_set_id: config.source.glyph_set_id,
         scan,
         code_bits,
+        output_size: config.output_size,
+        fill_byte: config.fill_byte,
     }
 }
 
@@ -2496,6 +2504,27 @@ mod tests {
             !state.export_form_is_dirty(),
             "fresh draft matches the config"
         );
+    }
+
+    #[test]
+    fn export_form_edits_output_size_and_fill_byte() {
+        let mut state = editable_state();
+        state.add_export_config("ROM".to_string());
+        {
+            let form = state.export_form_mut().unwrap();
+            // The preset default is the natural size + erased-EEPROM fill.
+            assert_eq!(form.output_size, None);
+            assert_eq!(form.fill_byte, fontspace_model::DEFAULT_FILL_BYTE);
+            form.output_size = Some(8192);
+            form.fill_byte = 0x00;
+        }
+        state.apply_export_form();
+        assert_eq!(state.document().export_configs[0].output_size, Some(8192));
+        assert_eq!(state.document().export_configs[0].fill_byte, 0x00);
+        // The saved values read back into the (re-synced) form.
+        let form = state.export_form_mut().unwrap();
+        assert_eq!(form.output_size, Some(8192));
+        assert_eq!(form.fill_byte, 0x00);
     }
 
     #[test]

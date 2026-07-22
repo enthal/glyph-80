@@ -87,6 +87,35 @@ pub fn show_export_configuration(ui: &mut egui::Ui, state: &mut AppState) {
                     ui.label("Code bits");
                     ui.add(egui::DragValue::new(&mut form.code_bits).range(1..=24));
                     ui.end_row();
+
+                    ui.label("Output size");
+                    egui::ComboBox::from_id_salt(ui.id().with("export_output_size"))
+                        .selected_text(output_size_label(form.output_size))
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(
+                                &mut form.output_size,
+                                None,
+                                output_size_label(None),
+                            );
+                            for kib in [2u32, 4, 8, 16, 32, 64] {
+                                let bytes = kib * 1024;
+                                ui.selectable_value(
+                                    &mut form.output_size,
+                                    Some(bytes),
+                                    output_size_label(Some(bytes)),
+                                );
+                            }
+                        });
+                    ui.end_row();
+
+                    ui.label("Fill byte");
+                    ui.add(
+                        egui::DragValue::new(&mut form.fill_byte)
+                            .range(0..=255)
+                            .hexadecimal(2, false, true)
+                            .prefix("0x"),
+                    );
+                    ui.end_row();
                 });
 
             ui.add_space(8.0);
@@ -191,6 +220,15 @@ fn show_empty_guidance(ui: &mut egui::Ui) {
             .weak(),
         );
     });
+}
+
+/// The human label for an output size: "Natural", a whole-KiB size, or a byte count.
+fn output_size_label(size: Option<u32>) -> String {
+    match size {
+        None => "Natural (image only)".to_string(),
+        Some(bytes) if bytes % 1024 == 0 => format!("{} KiB", bytes / 1024),
+        Some(bytes) => format!("{bytes} B"),
+    }
 }
 
 /// The human label for a scan direction.
