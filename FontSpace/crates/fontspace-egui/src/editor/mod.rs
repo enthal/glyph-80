@@ -285,7 +285,7 @@ fn region_toolbar(ui: &mut egui::Ui, state: &mut AppState) {
         return;
     };
     ui.horizontal(|ui| {
-        ui.label(format!("Selection {}×{}", rect.width(), rect.height()));
+        ui.label(format!("Selection {}x{}", rect.width(), rect.height()));
         if ui.button("Flip H").clicked() {
             state.flip_selection(FlipDir::LeftRight);
         }

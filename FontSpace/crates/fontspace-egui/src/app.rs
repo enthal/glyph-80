@@ -368,7 +368,7 @@ impl FontSpaceApp {
                         .character_set
                         .and_then(|id| character_sets.iter().find(|(cid, _)| *cid == id))
                         .map(|(_, name)| name.clone())
-                        .unwrap_or_else(|| "—".to_string());
+                        .unwrap_or_else(|| "-".to_string());
                     egui::ComboBox::from_id_salt("add_glyph_set_charset")
                         .selected_text(selected)
                         .show_ui(ui, |ui| {
