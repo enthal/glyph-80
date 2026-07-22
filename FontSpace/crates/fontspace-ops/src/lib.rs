@@ -52,7 +52,10 @@ pub use object_ops::{
     ReplaceExportConfig, add_export_config, add_glyph_set, duplicate_glyph_set, remove_glyph_set,
     rename_glyph_set, replace_export_config,
 };
-pub use page_ops::{AddPage, RemovePages, ReorderPages, add_page, remove_pages, reorder_pages};
+pub use page_ops::{
+    AddPage, DuplicatePage, MovePage, RemovePages, RenamePage, ReorderPages, add_page,
+    duplicate_page, move_page, remove_pages, rename_page, reorder_pages,
+};
 pub use selector::{GlyphSelector, PageSelector, resolve_glyph_codes_in, resolve_pages_in};
 
 /// Applies a change set forward (also the redo primitive).

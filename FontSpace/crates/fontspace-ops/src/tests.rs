@@ -12,15 +12,16 @@ use crate::apply_change_set;
 use crate::change_set::{ChangeSet, GlyphSetChange, ObjectChange};
 use crate::{
     AddCharacterEntry, AddExportConfig, AddGlyphSet, AddGuide, AddPage, ClearGlyphs,
-    CopyGuideToPages, DuplicateGlyphSet, FontSpaceError, FontSpaceWarning, GlyphRef, GlyphSelector,
-    InvertGlyphs, MoveGuide, PageSelector, PixelEdit, RecodeCharacterEntry, RemoveCharacterEntry,
-    RemoveGlyphSet, RemoveGuide, RemovePages, RenameGlyphSet, RenameGuide, ReorderCharacterEntries,
-    ReorderPages, ReplaceExportConfig, SetGuideVisible, SetPixels, ShiftGlyphs,
-    add_character_entry, add_export_config, add_glyph_set, add_guide, add_page, clear_glyphs,
-    copy_guide_to_pages, duplicate_glyph_set, invert_glyphs, move_guide, recode_character_entry,
-    remove_character_entry, remove_glyph_set, remove_guide, remove_pages, rename_glyph_set,
-    rename_guide, reorder_character_entries, reorder_pages, replace_export_config,
-    set_guide_visible, set_pixels, shift_glyphs, undo,
+    CopyGuideToPages, DuplicateGlyphSet, DuplicatePage, FontSpaceError, FontSpaceWarning, GlyphRef,
+    GlyphSelector, InvertGlyphs, MoveGuide, MovePage, PageSelector, PixelEdit,
+    RecodeCharacterEntry, RemoveCharacterEntry, RemoveGlyphSet, RemoveGuide, RemovePages,
+    RenameGlyphSet, RenameGuide, RenamePage, ReorderCharacterEntries, ReorderPages,
+    ReplaceExportConfig, SetGuideVisible, SetPixels, ShiftGlyphs, add_character_entry,
+    add_export_config, add_glyph_set, add_guide, add_page, clear_glyphs, copy_guide_to_pages,
+    duplicate_glyph_set, duplicate_page, invert_glyphs, move_guide, move_page,
+    recode_character_entry, remove_character_entry, remove_glyph_set, remove_guide, remove_pages,
+    rename_glyph_set, rename_guide, rename_page, reorder_character_entries, reorder_pages,
+    replace_export_config, set_guide_visible, set_pixels, shift_glyphs, undo,
 };
 
 struct Fixture {
@@ -560,6 +561,194 @@ fn reorder_to_same_order_is_a_noop() {
     )
     .unwrap();
     assert!(change_set.is_empty());
+}
+
+// --- Page rename / duplicate / move (spec/07 §7.2) ---
+
+#[test]
+fn rename_page_keeps_its_id_and_glyphs_and_undoes() {
+    let mut f = fixture();
+    let change_set = rename_page(
+        &mut f.doc,
+        &RenamePage {
+            glyph_set_id: f.glyph_set,
+            page_id: f.regular,
+            name: "Main".into(),
+        },
+    )
+    .unwrap();
+    let page = &f.doc.glyph_sets[0].pages[0];
+    assert_eq!(page.name, "Main");
+    assert_eq!(page.id, f.regular, "rename keeps the id");
+    assert!(page.glyph_of_code(0x41).is_some(), "glyphs are intact");
+
+    undo(&mut f.doc, &change_set).unwrap();
+    let page = &f.doc.glyph_sets[0].pages[0];
+    assert_eq!(page.name, "Regular");
+    assert_eq!(page.id, f.regular);
+}
+
+#[test]
+fn rename_page_to_the_same_name_is_a_noop() {
+    let mut f = fixture();
+    let change_set = rename_page(
+        &mut f.doc,
+        &RenamePage {
+            glyph_set_id: f.glyph_set,
+            page_id: f.regular,
+            name: "Regular".into(),
+        },
+    )
+    .unwrap();
+    assert!(change_set.is_empty());
+}
+
+#[test]
+fn duplicate_page_mints_fresh_ids_after_the_original() {
+    let mut f = fixture();
+    // A guide on Regular exercises the guide re-mint; the copy must validate.
+    f.doc.glyph_sets[0].pages[0].guides.push(Guide {
+        id: GuideId::new(&mut f.ids),
+        name: "baseline".into(),
+        axis: GuideAxis::Horizontal,
+        position: 6,
+        visible: true,
+        locked: false,
+    });
+    let change_set = duplicate_page(
+        &mut f.doc,
+        &DuplicatePage {
+            glyph_set_id: f.glyph_set,
+            page_id: f.regular,
+            name: "Regular copy".into(),
+        },
+        &mut f.ids,
+    )
+    .unwrap();
+    let gs = &f.doc.glyph_sets[0];
+    assert_eq!(gs.pages.len(), 3);
+    let copy = &gs.pages[1]; // inserted right after the original
+    assert_eq!(copy.name, "Regular copy");
+    assert_ne!(copy.id, f.regular, "fresh page id");
+    assert_eq!(copy.glyphs, gs.pages[0].glyphs, "glyphs copy verbatim");
+    assert_ne!(
+        copy.guides[0].id, gs.pages[0].guides[0].id,
+        "fresh guide id"
+    );
+    assert!(f.doc.validate(&Limits::default()).is_valid());
+
+    undo(&mut f.doc, &change_set).unwrap();
+    assert_eq!(f.doc.glyph_sets[0].pages.len(), 2);
+}
+
+#[test]
+fn move_page_between_glyph_sets_and_undo() {
+    let mut f = fixture();
+    // A second 8×8 glyph set (same geometry) to move into.
+    add_glyph_set(
+        &mut f.doc,
+        &AddGlyphSet {
+            name: "Two".into(),
+            description: String::new(),
+            glyph_size: GlyphSize::new(8, 8),
+            character_set_id: f.character_set,
+            initial_page_name: None,
+        },
+        &mut f.ids,
+    )
+    .unwrap();
+    let target = f.doc.glyph_sets[1].id;
+
+    let change_set = move_page(
+        &mut f.doc,
+        &MovePage {
+            from_glyph_set_id: f.glyph_set,
+            page_id: f.bold,
+            to_glyph_set_id: target,
+            at_index: None,
+        },
+    )
+    .unwrap();
+    assert!(
+        f.doc.glyph_sets[0].page_of_id(f.bold).is_none(),
+        "left the source"
+    );
+    assert!(
+        f.doc.glyph_sets[1].page_of_id(f.bold).is_some(),
+        "arrived in the target"
+    );
+
+    undo(&mut f.doc, &change_set).unwrap();
+    assert!(f.doc.glyph_sets[0].page_of_id(f.bold).is_some());
+    assert!(f.doc.glyph_sets[1].page_of_id(f.bold).is_none());
+}
+
+#[test]
+fn move_page_rejects_a_geometry_mismatch_atomically() {
+    let mut f = fixture();
+    // A taller glyph set — moving an 8×8 page there is a geometry mismatch.
+    add_glyph_set(
+        &mut f.doc,
+        &AddGlyphSet {
+            name: "Tall".into(),
+            description: String::new(),
+            glyph_size: GlyphSize::new(8, 16),
+            character_set_id: f.character_set,
+            initial_page_name: None,
+        },
+        &mut f.ids,
+    )
+    .unwrap();
+    let target = f.doc.glyph_sets[1].id;
+
+    let err = move_page(
+        &mut f.doc,
+        &MovePage {
+            from_glyph_set_id: f.glyph_set,
+            page_id: f.bold,
+            to_glyph_set_id: target,
+            at_index: None,
+        },
+    )
+    .unwrap_err();
+    assert!(matches!(err, FontSpaceError::PageGeometryMismatch { .. }));
+    // Atomic: the page never left the source.
+    assert!(f.doc.glyph_sets[0].page_of_id(f.bold).is_some());
+    assert_eq!(f.doc.glyph_sets[1].pages.len(), 0);
+}
+
+#[test]
+fn move_page_within_a_glyph_set_repositions_and_undoes() {
+    // Same-set move exercises the post-removal index math (at_index counts the shrunk
+    // vector). Start [Regular, Bold]; move Regular to the end → [Bold, Regular].
+    let mut f = fixture();
+    let names = |doc: &FontSpace| -> Vec<String> {
+        doc.glyph_sets[0]
+            .pages
+            .iter()
+            .map(|p| p.name.clone())
+            .collect()
+    };
+    assert_eq!(names(&f.doc), ["Regular", "Bold"]);
+
+    let change_set = move_page(
+        &mut f.doc,
+        &MovePage {
+            from_glyph_set_id: f.glyph_set,
+            page_id: f.regular,
+            to_glyph_set_id: f.glyph_set,
+            at_index: None, // end of the shrunk vector
+        },
+    )
+    .unwrap();
+    assert_eq!(names(&f.doc), ["Bold", "Regular"]);
+
+    undo(&mut f.doc, &change_set).unwrap();
+    assert_eq!(
+        names(&f.doc),
+        ["Regular", "Bold"],
+        "undo restores the order"
+    );
 }
 
 // --- Guide operations ---
