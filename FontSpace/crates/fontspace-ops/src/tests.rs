@@ -711,10 +711,44 @@ fn move_page_rejects_a_geometry_mismatch_atomically() {
         },
     )
     .unwrap_err();
-    assert!(matches!(err, FontSpaceError::GeometryMismatch { .. }));
+    assert!(matches!(err, FontSpaceError::PageGeometryMismatch { .. }));
     // Atomic: the page never left the source.
     assert!(f.doc.glyph_sets[0].page_of_id(f.bold).is_some());
     assert_eq!(f.doc.glyph_sets[1].pages.len(), 0);
+}
+
+#[test]
+fn move_page_within_a_glyph_set_repositions_and_undoes() {
+    // Same-set move exercises the post-removal index math (at_index counts the shrunk
+    // vector). Start [Regular, Bold]; move Regular to the end → [Bold, Regular].
+    let mut f = fixture();
+    let names = |doc: &FontSpace| -> Vec<String> {
+        doc.glyph_sets[0]
+            .pages
+            .iter()
+            .map(|p| p.name.clone())
+            .collect()
+    };
+    assert_eq!(names(&f.doc), ["Regular", "Bold"]);
+
+    let change_set = move_page(
+        &mut f.doc,
+        &MovePage {
+            from_glyph_set_id: f.glyph_set,
+            page_id: f.regular,
+            to_glyph_set_id: f.glyph_set,
+            at_index: None, // end of the shrunk vector
+        },
+    )
+    .unwrap();
+    assert_eq!(names(&f.doc), ["Bold", "Regular"]);
+
+    undo(&mut f.doc, &change_set).unwrap();
+    assert_eq!(
+        names(&f.doc),
+        ["Regular", "Bold"],
+        "undo restores the order"
+    );
 }
 
 // --- Guide operations ---

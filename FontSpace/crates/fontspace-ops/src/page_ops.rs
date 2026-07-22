@@ -148,10 +148,13 @@ pub struct DuplicatePage {
     pub name: String,
 }
 
-/// Move a page from one glyph set to another (or reposition within one). The page keeps
-/// its id and glyphs; both glyph sets must share the same geometry (spec/03 §3.5).
-/// `at_index` is the destination position (or the end when `None`). Glyphs whose `code`
-/// has no entry in the destination's character set become tolerated dangling glyphs.
+/// Move a page from one glyph set to another (or reposition within one when
+/// `from == to`; `reorder_pages` is the usual within-set tool). The page keeps its id and
+/// glyphs; both glyph sets must share the same geometry (spec/03 §3.5). `at_index` is the
+/// destination index **after the page is removed from its source** — so a same-set move
+/// counts positions in the shrunk vector — clamped to the end, or the end when `None`.
+/// Glyphs whose `code` has no entry in the destination's character set become tolerated
+/// dangling glyphs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MovePage {
     pub from_glyph_set_id: GlyphSetId,
@@ -226,8 +229,9 @@ pub fn move_page(doc: &mut FontSpace, req: &MovePage) -> Result<ChangeSet, FontS
         (from.glyph_size, to.glyph_size, to.pages.len())
     };
     if source_size != target_size {
-        return Err(FontSpaceError::GeometryMismatch {
-            glyph_set: req.to_glyph_set_id,
+        return Err(FontSpaceError::PageGeometryMismatch {
+            from_glyph_set: req.from_glyph_set_id,
+            to_glyph_set: req.to_glyph_set_id,
             page: req.page_id,
             source_size,
             target_size,

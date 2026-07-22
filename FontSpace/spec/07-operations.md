@@ -35,7 +35,7 @@ pub enum FontCommand {
     ReorderPages(ReorderPages),
     RenamePage(RenamePage),                       // rename in place (no-op when unchanged)
     DuplicatePage(DuplicatePage),                 // copy with fresh page + guide ids, after the original
-    MovePage(MovePage),                           // move a page between glyph sets of equal geometry
+    MovePage(MovePage),                           // move a page between glyph sets of equal geometry (or reposition within one)
     AddGuide(AddGuide),
     MoveGuide(MoveGuide),
     RemoveGuide(RemoveGuide),

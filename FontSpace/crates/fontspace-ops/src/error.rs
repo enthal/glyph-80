@@ -123,6 +123,17 @@ pub enum FontSpaceError {
     },
 
     #[error(
+        "cannot move page {page:?} from glyph set {from_glyph_set:?} ({source_size}) into {to_glyph_set:?} ({target_size}): the geometries must match"
+    )]
+    PageGeometryMismatch {
+        from_glyph_set: GlyphSetId,
+        to_glyph_set: GlyphSetId,
+        page: PageId,
+        source_size: GlyphSize,
+        target_size: GlyphSize,
+    },
+
+    #[error(
         "glyph set {glyph_set:?} / page {page:?}: sequential paste from code {start:#06x} overflows the code space at glyph {at_index}"
     )]
     SequentialCodeOverflow {
