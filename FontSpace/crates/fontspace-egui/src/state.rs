@@ -11,8 +11,8 @@
 use std::path::{Path, PathBuf};
 
 use fontspace_export::{
-    ExportError, ExportSummary, ScanDirection, column_scan_config, render_rom, row_scan_config,
-    validate_export,
+    AddressFieldSpec, ExportError, ExportSummary, ScanDirection, build_scan_config, layout_of,
+    render_rom, row_scan_config, validate_export,
 };
 use fontspace_json::{LoadOutcome, load_fragment, save_fragment};
 use fontspace_model::{
@@ -69,6 +69,12 @@ pub struct ExportConfigForm {
     pub output_address_bits: Option<u8>,
     /// Padding byte for [`output_address_bits`](Self::output_address_bits).
     pub fill_byte: u8,
+    /// The `[pixel, code, page]` address fields in address order (low→high), each with its
+    /// bit-reverse flag (spec/10 §10.4).
+    pub field_order: [AddressFieldSpec; 3],
+    /// Whether the data bits run LSB-first (`D0` = the leftmost/top pixel) rather than the
+    /// default MSB-first.
+    pub data_reversed: bool,
 }
 
 /// What a pending rename targets (spec/12 §12.2): a glyph set or a page within one.
@@ -1040,22 +1046,16 @@ impl AppState {
                 return;
             };
             let pages: Vec<PageId> = glyph_set.pages.iter().map(|page| page.id).collect();
-            let mut config = match form.scan {
-                ScanDirection::Row => row_scan_config(
-                    self.ids.as_mut(),
-                    form.name,
-                    glyph_set,
-                    pages,
-                    form.code_bits,
-                ),
-                ScanDirection::Column => column_scan_config(
-                    self.ids.as_mut(),
-                    form.name,
-                    glyph_set,
-                    pages,
-                    form.code_bits,
-                ),
-            };
+            let mut config = build_scan_config(
+                self.ids.as_mut(),
+                form.name,
+                glyph_set,
+                pages,
+                form.code_bits,
+                form.scan,
+                form.field_order,
+                form.data_reversed,
+            );
             // Preserve identity so undo and the JSON diff stay minimal (the preset minted
             // fresh ids we discard here).
             config.id = existing.id;
@@ -1718,6 +1718,7 @@ fn form_from_config(config: &ExportConfig) -> ExportConfigForm {
         .filter(|bit| matches!(bit, AddressBitSource::CodeBit(_)))
         .count()
         .min(u8::MAX as usize) as u8;
+    let (field_order, data_reversed) = layout_of(config);
     ExportConfigForm {
         config_id: config.id,
         name: config.name.clone(),
@@ -1726,6 +1727,8 @@ fn form_from_config(config: &ExportConfig) -> ExportConfigForm {
         code_bits,
         output_address_bits: config.output_address_bits,
         fill_byte: config.fill_byte,
+        field_order,
+        data_reversed,
     }
 }
 
@@ -2887,6 +2890,28 @@ mod tests {
         let form = state.export_form_mut().unwrap();
         assert_eq!(form.output_address_bits, Some(13));
         assert_eq!(form.fill_byte, 0x00);
+    }
+
+    #[test]
+    fn export_form_edits_the_address_layout() {
+        let mut state = editable_state();
+        state.add_export_config("ROM".to_string());
+        {
+            let form = state.export_form_mut().unwrap();
+            // Default order is [Pixel, Code, Page]; reverse the code field + the data bits.
+            assert_eq!(
+                form.field_order[1].kind,
+                fontspace_export::AddressFieldKind::Code
+            );
+            form.field_order[1].reversed = true;
+            form.data_reversed = true;
+        }
+        state.apply_export_form();
+        // The saved config reads the edited layout back and is still a valid 1:1 export.
+        let form = state.export_form_mut().unwrap();
+        assert!(form.field_order[1].reversed, "code reverse persisted");
+        assert!(form.data_reversed, "data reverse persisted");
+        assert!(state.validate_selected_export().unwrap().is_ok());
     }
 
     #[test]

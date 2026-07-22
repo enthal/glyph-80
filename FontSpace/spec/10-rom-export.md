@@ -86,6 +86,8 @@ A11..A12 = page bit 0..1       (4 pages)
 
 Here the row is in the address and the 8 pixels of that row come out on the data bits (§10.5). `CodeBit` — not an ordinal-slot bit — is what makes the ROM directly character-addressable. v1 avoids a general expression language.
 
+**Field layout.** The three address dimensions — the scanned **pixel** axis, the **code**, and the **page** — are laid out as contiguous fields in any order (low→high), each optionally **bit-reversed** (its bits run most-significant-first within its span of address lines), to match hardware whose address lines aren't wired in the default order. `fontspace-export::build_scan_config` builds this from a field order + per-field reverse flags + a data-bit-order flag, and `layout_of` reads it back; the scan presets are `build_scan_config` with the default order (`[pixel, code, page]`, none reversed) and MSB-first data. Reordering or reversing a field is a permutation of the same address space, so the 1:1 coverage (§10.7) is unaffected — the validator accepts any such layout.
+
 ## 10.5 Data map
 
 A data map defines what each ROM output bit emits.
