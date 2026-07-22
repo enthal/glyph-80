@@ -1,17 +1,18 @@
 //! The Export Configuration tile (spec/12 §12.11/§12.12, spec/10): a form over the
 //! selected export config's high-level parameters — name, source glyph set, scan
-//! direction, and code-bits — plus a live 1:1 validation summary and an
-//! **Export to file** action that writes the raw ROM image (spec/13 §13.1).
+//! direction, code-bits, output size/fill, and the **address-bit layout** (order + reverse
+//! the pixel/code/page fields, and the data-bit order) — plus a live 1:1 validation
+//! summary and an **Export to file** action that writes the raw ROM image (spec/13 §13.1).
 //!
 //! The view owns no export semantics (CLAUDE.md "the one architectural rule"): it edits
-//! a working [`ExportConfigForm`] on [`AppState`] and, on **Apply**, has the state
-//! rebuild the config from a `fontspace-export` scan preset and replace it as one undo
-//! entry. Validation is `fontspace-export::validate_export`, rendered here.
+//! a working [`ExportConfigForm`] on [`AppState`] and, on **Apply**, has the state rebuild
+//! the config via `fontspace-export::build_scan_config` and replace it as one undo entry.
+//! Validation is `fontspace-export::validate_export`, rendered here.
 
-use fontspace_export::ScanDirection;
+use fontspace_export::{AddressFieldKind, DEFAULT_FIELD_ORDER, ScanDirection};
 use fontspace_model::GlyphSetId;
 
-use crate::state::AppState;
+use crate::state::{AppState, ExportConfigForm};
 
 /// Renders the Export Configuration view for `state`'s selected config, or guidance when
 /// none is selected.
@@ -115,6 +116,9 @@ pub fn show_export_configuration(ui: &mut egui::Ui, state: &mut AppState) {
                     );
                     ui.end_row();
                 });
+
+            ui.add_space(8.0);
+            address_layout_editor(ui, form);
 
             ui.add_space(8.0);
             ui.horizontal(|ui| {
@@ -232,6 +236,60 @@ fn humanized_size(bits: u8) -> String {
     }
     // Unreachable — the ("B", 0) unit always matches — but keeps the function total.
     format!("{} B", 1u64 << bits)
+}
+
+/// The address-bit layout editor (spec/10 §10.4): the three `[pixel, code, page]` fields
+/// in address order (low→high) with ▲/▼ reorder and a per-field bit-reverse toggle, plus
+/// the data-bit order toggle. Matches hardware whose address/data lines aren't wired in
+/// the default order.
+fn address_layout_editor(ui: &mut egui::Ui, form: &mut ExportConfigForm) {
+    ui.horizontal(|ui| {
+        ui.strong("Address layout");
+        ui.weak("(low → high)");
+        if ui.small_button("reset").clicked() {
+            form.field_order = DEFAULT_FIELD_ORDER;
+            form.data_reversed = false;
+        }
+    });
+
+    let mut swap: Option<(usize, usize)> = None;
+    for i in 0..form.field_order.len() {
+        ui.push_id(i, |ui| {
+            ui.horizontal(|ui| {
+                if ui
+                    .add_enabled(i > 0, egui::Button::new("▲").small())
+                    .clicked()
+                {
+                    swap = Some((i, i - 1));
+                }
+                if ui
+                    .add_enabled(
+                        i + 1 < form.field_order.len(),
+                        egui::Button::new("▼").small(),
+                    )
+                    .clicked()
+                {
+                    swap = Some((i, i + 1));
+                }
+                ui.label(field_kind_label(form.field_order[i].kind));
+                ui.checkbox(&mut form.field_order[i].reversed, "reversed");
+            });
+        });
+    }
+    if let Some((a, b)) = swap {
+        form.field_order.swap(a, b);
+    }
+
+    ui.checkbox(&mut form.data_reversed, "Reverse data bit order");
+}
+
+/// The human label for an address field kind.
+fn field_kind_label(kind: AddressFieldKind) -> &'static str {
+    match kind {
+        AddressFieldKind::Pixel => "Pixel (scanned axis)",
+        AddressFieldKind::Code => "Code",
+        AddressFieldKind::Page => "Page",
+    }
 }
 
 /// The human label for a scan direction.

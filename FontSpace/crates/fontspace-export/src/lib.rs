@@ -533,41 +533,122 @@ fn partition(
     Ok(ns.len() as u32)
 }
 
-/// Builds the standard **row-scan** text-ROM config (spec/10 §10.4–10.5): the row
-/// (`pixel_y`) and enough `code`/`page` bits go in the address (low→high: row, code,
-/// page), and data bit `Di` emits pixel `x = width-1-i` of the addressed row — so the
-/// leftmost pixel is the most-significant data bit. `code_bits` sets the addressable
-/// code range; page bits are sized to `pages`.
-pub fn row_scan_config(
+/// One dimension of the ROM address (spec/10 §10.4): the scanned **pixel** axis, the
+/// character **code**, or the **page** index. A config's address is these three fields
+/// laid out low→high in some order, each optionally bit-reversed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AddressFieldKind {
+    Pixel,
+    Code,
+    Page,
+}
+
+/// One address field's placement knobs: which dimension, and whether its bits run
+/// most-significant-first (`reversed`) within its span of address lines.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AddressFieldSpec {
+    pub kind: AddressFieldKind,
+    pub reversed: bool,
+}
+
+/// The default field order — pixel (low), then code, then page (high) — none reversed,
+/// which reproduces the classic text-ROM layout.
+pub const DEFAULT_FIELD_ORDER: [AddressFieldSpec; 3] = [
+    AddressFieldSpec {
+        kind: AddressFieldKind::Pixel,
+        reversed: false,
+    },
+    AddressFieldSpec {
+        kind: AddressFieldKind::Code,
+        reversed: false,
+    },
+    AddressFieldSpec {
+        kind: AddressFieldKind::Page,
+        reversed: false,
+    },
+];
+
+/// Builds a 1:1 scan config with full control over the **address-bit layout** (spec/10
+/// §10.4): the `[pixel, code, page]` fields are placed in `field_order` low→high, each
+/// emitting its dimension's bits ascending, or most-significant-first when `reversed`.
+/// The addressed axis is the `scan` axis (row → `pixel_y`, column → `pixel_x`); the other
+/// axis comes out on the data bits, MSB = the leftmost/top pixel unless `data_reversed`.
+/// The scan presets ([`row_scan_config`]/[`column_scan_config`]) are this with
+/// [`DEFAULT_FIELD_ORDER`] and `data_reversed = false`.
+#[allow(clippy::too_many_arguments)]
+pub fn build_scan_config(
     ids: &mut dyn IdGen,
     name: impl Into<String>,
     glyph_set: &GlyphSet,
     pages: Vec<PageId>,
     code_bits: u8,
+    scan: ScanDirection,
+    field_order: [AddressFieldSpec; 3],
+    data_reversed: bool,
 ) -> ExportConfig {
     let size = glyph_set.glyph_size;
-    let y_bits = bits_for(size.height as u32);
+    let pixel_bits = match scan {
+        ScanDirection::Row => bits_for(size.height as u32),
+        ScanDirection::Column => bits_for(size.width as u32),
+    };
     let page_bits = bits_for(pages.len() as u32);
 
     let mut address_bits = Vec::new();
-    for n in 0..y_bits {
-        address_bits.push(AddressBitSource::PixelYBit(n as u8));
-    }
-    for n in 0..code_bits {
-        address_bits.push(AddressBitSource::CodeBit(n));
-    }
-    for n in 0..page_bits {
-        address_bits.push(AddressBitSource::PageBit(n as u8));
+    for field in field_order {
+        let width = match field.kind {
+            AddressFieldKind::Pixel => pixel_bits,
+            AddressFieldKind::Code => code_bits as u32,
+            AddressFieldKind::Page => page_bits,
+        };
+        for local in 0..width {
+            // Ascending places dimension bit `local` on this line; reversed places
+            // `width-1-local`, so the field's high bit lands on its lowest address line.
+            let n = if field.reversed {
+                width - 1 - local
+            } else {
+                local
+            } as u8;
+            address_bits.push(match field.kind {
+                AddressFieldKind::Pixel => match scan {
+                    ScanDirection::Row => AddressBitSource::PixelYBit(n),
+                    ScanDirection::Column => AddressBitSource::PixelXBit(n),
+                },
+                AddressFieldKind::Code => AddressBitSource::CodeBit(n),
+                AddressFieldKind::Page => AddressBitSource::PageBit(n),
+            });
+        }
     }
 
-    let output_bits = (0..size.width)
-        .map(|i| OutputBitSource::Pixel {
-            // Di emits column (width-1-i): the leftmost pixel is the MSB (D_{width-1}).
-            x: CoordinateExpr::Constant((size.width - 1 - i) as i32),
-            y: CoordinateExpr::AddressedY,
+    // Data bits emit the *other* axis; `Di` is the leftmost/top pixel as the MSB by
+    // default, or the LSB when `data_reversed`.
+    let data_extent = match scan {
+        ScanDirection::Row => size.width,
+        ScanDirection::Column => size.height,
+    };
+    let output_bits = (0..data_extent)
+        .map(|i| {
+            let coord = if data_reversed {
+                i
+            } else {
+                data_extent - 1 - i
+            } as i32;
+            match scan {
+                ScanDirection::Row => OutputBitSource::Pixel {
+                    x: CoordinateExpr::Constant(coord),
+                    y: CoordinateExpr::AddressedY,
+                },
+                ScanDirection::Column => OutputBitSource::Pixel {
+                    x: CoordinateExpr::AddressedX,
+                    y: CoordinateExpr::Constant(coord),
+                },
+            }
         })
         .collect();
 
+    let scan_name = match scan {
+        ScanDirection::Row => "row",
+        ScanDirection::Column => "column",
+    };
     ExportConfig {
         id: fontspace_model::ExportConfigId::new(ids),
         name: name.into(),
@@ -578,12 +659,12 @@ pub fn row_scan_config(
         },
         address_map: AddressMap {
             id: ExportComponentId::new(ids),
-            name: "row-scan address".into(),
+            name: format!("{scan_name}-scan address"),
             address_bits,
         },
         data_map: DataMap {
             id: ExportComponentId::new(ids),
-            name: "row-scan data".into(),
+            name: format!("{scan_name}-scan data"),
             output_bits,
         },
         output_format: OutputFormatConfig::RawBinary,
@@ -592,11 +673,99 @@ pub fn row_scan_config(
     }
 }
 
-/// Builds the standard **column-scan** ROM config: the column (`pixel_x`) and enough
-/// `code`/`page` bits go in the address (low→high: column, code, page), and data bit
-/// `Di` emits row `y = height-1-i` of the addressed column — so the top pixel is the
-/// most-significant data bit. The counterpart to [`row_scan_config`] for hardware that
-/// scans columns; each word is one glyph column.
+/// The default field order + reverses read back out of a config's address map, plus the
+/// data-bit order (spec/10 §10.4), for the export editor. Each field's `reversed` is
+/// detected from whether its dimension's bit indices ascend or descend across its address
+/// lines; a dimension with no address bits (e.g. page with one page) is placed last, not
+/// reversed. Falls back to [`DEFAULT_FIELD_ORDER`] for a config that isn't a scan layout.
+pub fn layout_of(config: &ExportConfig) -> ([AddressFieldSpec; 3], bool) {
+    // Walk the address lines, grouping consecutive same-dimension runs.
+    let mut runs: Vec<(AddressFieldKind, Vec<u8>)> = Vec::new();
+    for bit in &config.address_map.address_bits {
+        let (kind, n) = match bit {
+            AddressBitSource::PixelXBit(n) | AddressBitSource::PixelYBit(n) => {
+                (AddressFieldKind::Pixel, *n)
+            }
+            AddressBitSource::CodeBit(n) => (AddressFieldKind::Code, *n),
+            AddressBitSource::PageBit(n) => (AddressFieldKind::Page, *n),
+            // A constant/inverted line isn't a scan field; give up on read-back.
+            _ => return (DEFAULT_FIELD_ORDER, false),
+        };
+        match runs.last_mut() {
+            Some((k, ns)) if *k == kind => ns.push(n),
+            _ => runs.push((kind, vec![n])),
+        }
+    }
+
+    let mut order: Vec<AddressFieldSpec> = runs
+        .iter()
+        .map(|(kind, ns)| AddressFieldSpec {
+            kind: *kind,
+            // Reversed when the dimension bits descend across ascending address lines.
+            reversed: ns.first() > ns.last(),
+        })
+        .collect();
+    // Append any dimension that contributed no address lines, so all three are present.
+    for kind in [
+        AddressFieldKind::Pixel,
+        AddressFieldKind::Code,
+        AddressFieldKind::Page,
+    ] {
+        if !order.iter().any(|f| f.kind == kind) {
+            order.push(AddressFieldSpec {
+                kind,
+                reversed: false,
+            });
+        }
+    }
+
+    // `data_reversed` is true when `D0` reads the leftmost/top pixel (constant coord 0).
+    let data_reversed = matches!(
+        config.data_map.output_bits.first(),
+        Some(OutputBitSource::Pixel {
+            x: CoordinateExpr::Constant(0),
+            ..
+        }) | Some(OutputBitSource::Pixel {
+            y: CoordinateExpr::Constant(0),
+            ..
+        })
+    );
+
+    (
+        order.try_into().unwrap_or(DEFAULT_FIELD_ORDER),
+        data_reversed,
+    )
+}
+
+/// Builds the standard **row-scan** text-ROM config (spec/10 §10.4–10.5): the row
+/// (`pixel_y`), code, then page bits in the address (low→high), and data bit `Di` emits
+/// pixel `x = width-1-i` of the addressed row — so the leftmost pixel is the MSB.
+/// `code_bits` sets the addressable code range; page bits are sized to `pages`. A thin
+/// wrapper over [`build_scan_config`] with the default layout.
+pub fn row_scan_config(
+    ids: &mut dyn IdGen,
+    name: impl Into<String>,
+    glyph_set: &GlyphSet,
+    pages: Vec<PageId>,
+    code_bits: u8,
+) -> ExportConfig {
+    build_scan_config(
+        ids,
+        name,
+        glyph_set,
+        pages,
+        code_bits,
+        ScanDirection::Row,
+        DEFAULT_FIELD_ORDER,
+        false,
+    )
+}
+
+/// Builds the standard **column-scan** ROM config: the column (`pixel_x`), code, then
+/// page bits in the address (low→high), and data bit `Di` emits row `y = height-1-i` of
+/// the addressed column — so the top pixel is the MSB. The counterpart to
+/// [`row_scan_config`] for column-scanning hardware; a thin wrapper over
+/// [`build_scan_config`].
 pub fn column_scan_config(
     ids: &mut dyn IdGen,
     name: impl Into<String>,
@@ -604,51 +773,16 @@ pub fn column_scan_config(
     pages: Vec<PageId>,
     code_bits: u8,
 ) -> ExportConfig {
-    let size = glyph_set.glyph_size;
-    let x_bits = bits_for(size.width as u32);
-    let page_bits = bits_for(pages.len() as u32);
-
-    let mut address_bits = Vec::new();
-    for n in 0..x_bits {
-        address_bits.push(AddressBitSource::PixelXBit(n as u8));
-    }
-    for n in 0..code_bits {
-        address_bits.push(AddressBitSource::CodeBit(n));
-    }
-    for n in 0..page_bits {
-        address_bits.push(AddressBitSource::PageBit(n as u8));
-    }
-
-    let output_bits = (0..size.height)
-        .map(|i| OutputBitSource::Pixel {
-            x: CoordinateExpr::AddressedX,
-            // Di emits row (height-1-i): the top pixel is the MSB (D_{height-1}).
-            y: CoordinateExpr::Constant((size.height - 1 - i) as i32),
-        })
-        .collect();
-
-    ExportConfig {
-        id: fontspace_model::ExportConfigId::new(ids),
-        name: name.into(),
-        description: String::new(),
-        source: ExportSourceSpec {
-            glyph_set_id: glyph_set.id,
-            pages,
-        },
-        address_map: AddressMap {
-            id: ExportComponentId::new(ids),
-            name: "column-scan address".into(),
-            address_bits,
-        },
-        data_map: DataMap {
-            id: ExportComponentId::new(ids),
-            name: "column-scan data".into(),
-            output_bits,
-        },
-        output_format: OutputFormatConfig::RawBinary,
-        output_address_bits: None,
-        fill_byte: fontspace_model::DEFAULT_FILL_BYTE,
-    }
+    build_scan_config(
+        ids,
+        name,
+        glyph_set,
+        pages,
+        code_bits,
+        ScanDirection::Column,
+        DEFAULT_FIELD_ORDER,
+        false,
+    )
 }
 
 /// The number of address bits needed to index `count` values (`0` for 0/1).
@@ -704,6 +838,133 @@ mod tests {
             }
         }
         b
+    }
+
+    #[test]
+    fn build_scan_config_places_fields_in_the_given_order() {
+        let mut ids = SequentialIdGen::new();
+        let (set, pages) = glyph_set(&mut ids, GlyphSize::new(8, 8), 1);
+        // Code on the LOW address lines, the row above it (the reverse of the default).
+        let order = [
+            AddressFieldSpec {
+                kind: AddressFieldKind::Code,
+                reversed: false,
+            },
+            AddressFieldSpec {
+                kind: AddressFieldKind::Pixel,
+                reversed: false,
+            },
+            AddressFieldSpec {
+                kind: AddressFieldKind::Page,
+                reversed: false,
+            },
+        ];
+        let config = build_scan_config(
+            &mut ids,
+            "rom",
+            &set,
+            pages,
+            3,
+            ScanDirection::Row,
+            order,
+            false,
+        );
+        // A0..A2 = code bits, A3..A5 = row bits.
+        assert!(matches!(
+            config.address_map.address_bits[0],
+            AddressBitSource::CodeBit(0)
+        ));
+        assert!(matches!(
+            config.address_map.address_bits[3],
+            AddressBitSource::PixelYBit(0)
+        ));
+        // Reordering the fields is still a strict 1:1 mapping.
+        assert!(validate_export(&set, &config, &Limits::default()).is_ok());
+        // layout_of reads the order back (page, with no bits for 1 page, lands last).
+        let (read, data_reversed) = layout_of(&config);
+        assert_eq!(read[0].kind, AddressFieldKind::Code);
+        assert_eq!(read[1].kind, AddressFieldKind::Pixel);
+        assert_eq!(read[2].kind, AddressFieldKind::Page);
+        assert!(!data_reversed);
+    }
+
+    #[test]
+    fn build_scan_config_reverses_a_field_and_round_trips() {
+        let mut ids = SequentialIdGen::new();
+        let (set, pages) = glyph_set(&mut ids, GlyphSize::new(8, 8), 1);
+        let order = [
+            AddressFieldSpec {
+                kind: AddressFieldKind::Pixel,
+                reversed: false,
+            },
+            AddressFieldSpec {
+                kind: AddressFieldKind::Code,
+                reversed: true, // code bits most-significant-first within their span
+            },
+            AddressFieldSpec {
+                kind: AddressFieldKind::Page,
+                reversed: false,
+            },
+        ];
+        let config = build_scan_config(
+            &mut ids,
+            "rom",
+            &set,
+            pages,
+            3,
+            ScanDirection::Row,
+            order,
+            false,
+        );
+        // The code run descends: A3 = CodeBit(2) … A5 = CodeBit(0).
+        assert!(matches!(
+            config.address_map.address_bits[3],
+            AddressBitSource::CodeBit(2)
+        ));
+        assert!(validate_export(&set, &config, &Limits::default()).is_ok());
+        assert_eq!(layout_of(&config).0, order, "reverse round-trips");
+    }
+
+    #[test]
+    fn data_reversed_flips_the_output_bit_order() {
+        let mut ids = SequentialIdGen::new();
+        let (mut set, pages) = glyph_set(&mut ids, GlyphSize::new(8, 8), 1);
+        draw(&mut set, 0, 0, &[(0, 0)]); // only x=0 of row 0 is on
+        let limits = Limits::default();
+
+        // Default: x=0 is the MSB → 0x80.
+        let normal = build_scan_config(
+            &mut ids,
+            "rom",
+            &set,
+            pages.clone(),
+            1,
+            ScanDirection::Row,
+            DEFAULT_FIELD_ORDER,
+            false,
+        );
+        let s = validate_export(&set, &normal, &limits).unwrap();
+        let bytes = encode_raw_binary(
+            &generate_image(&set, &normal, &limits).unwrap(),
+            s.data_bits,
+        );
+        assert_eq!(bytes[0], 0x80);
+
+        // Reversed data order: x=0 is the LSB → 0x01.
+        let rev = build_scan_config(
+            &mut ids,
+            "rom",
+            &set,
+            pages,
+            1,
+            ScanDirection::Row,
+            DEFAULT_FIELD_ORDER,
+            true,
+        );
+        let s = validate_export(&set, &rev, &limits).unwrap();
+        let bytes = encode_raw_binary(&generate_image(&set, &rev, &limits).unwrap(), s.data_bits);
+        assert_eq!(bytes[0], 0x01);
+        assert!(layout_of(&rev).1, "data_reversed reads back");
     }
 
     #[test]
