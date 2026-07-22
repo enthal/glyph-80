@@ -429,8 +429,11 @@ pub fn validate_export(
     let output_bytes = match config.output_address_bits {
         None => natural_bytes,
         Some(bits) => {
-            // Cap the exponent so `1 << bits` is safe and the image stays within limits.
-            let max_bits = (u64::BITS - 1 - limits.max_output_image_pixels.leading_zeros()) as u8;
+            // Cap the exponent so both `1u64 << bits` here and `1usize << bits` in
+            // `render_rom` stay in range (usize may be 32-bit) and the image stays within
+            // the limit. `saturating_sub` keeps a zero/tiny limit from underflowing.
+            let limit_bits = 63u32.saturating_sub(limits.max_output_image_pixels.leading_zeros());
+            let max_bits = limit_bits.min(usize::BITS - 1) as u8;
             if bits > max_bits {
                 return Err(ExportError::OutputSizeTooLarge {
                     config: name.clone(),

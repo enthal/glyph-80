@@ -35,8 +35,8 @@ pub struct ExportConfig {
     /// EEPROM (spec/10 §10.9).
     pub output_address_bits: Option<u8>,
     /// The byte written to any output address not produced by the image — the padding up
-    /// to `output_size` (and, once memory-mapping lands, address holes). Defaults to
-    /// `0xFF`, the erased-EEPROM value.
+    /// to `output_address_bits` (and, once memory-mapping lands, address holes). Defaults
+    /// to `0xFF`, the erased-EEPROM value.
     pub fill_byte: u8,
 }
 

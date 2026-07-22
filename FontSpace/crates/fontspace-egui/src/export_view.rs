@@ -222,14 +222,15 @@ fn show_empty_guidance(ui: &mut egui::Ui) {
 
 /// A humanized byte size for `2^bits`: e.g. `10 → "1 KiB"`, `16 → "64 KiB"`, `20 → "1 MiB"`.
 fn humanized_size(bits: u8) -> String {
-    // Pick the largest binary unit whose exponent divides evenly, so the number stays a
-    // whole count of B / KiB / MiB / GiB.
+    // Use the largest binary unit no bigger than the size; the count is then `2^(bits -
+    // unit_bits)`, a whole power-of-two number of B / KiB / MiB / GiB.
     const UNITS: [(&str, u8); 4] = [("GiB", 30), ("MiB", 20), ("KiB", 10), ("B", 0)];
     for (unit, unit_bits) in UNITS {
         if bits >= unit_bits {
             return format!("{} {unit}", 1u64 << (bits - unit_bits));
         }
     }
+    // Unreachable — the ("B", 0) unit always matches — but keeps the function total.
     format!("{} B", 1u64 << bits)
 }
 
