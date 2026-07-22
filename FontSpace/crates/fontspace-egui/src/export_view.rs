@@ -58,7 +58,7 @@ pub fn show_export_configuration(ui: &mut egui::Ui, state: &mut AppState) {
                         .iter()
                         .find(|(id, _)| *id == form.glyph_set_id)
                         .map(|(_, name)| name.clone())
-                        .unwrap_or_else(|| "—".to_string());
+                        .unwrap_or_else(|| "-".to_string());
                     egui::ComboBox::from_id_salt(ui.id().with("export_source"))
                         .selected_text(selected)
                         .show_ui(ui, |ui| {
@@ -176,7 +176,7 @@ fn show_validation(ui: &mut egui::Ui, state: &mut AppState) {
 
     ui.add_space(6.0);
     if ui
-        .add_enabled(valid, egui::Button::new("Export to file…"))
+        .add_enabled(valid, egui::Button::new("Export to file..."))
         .on_hover_text("Write the raw ROM image to a .bin file")
         .clicked()
     {
@@ -216,8 +216,8 @@ fn show_empty_guidance(ui: &mut egui::Ui) {
         ui.label(
             egui::RichText::new(
                 "No export configuration selected.\n\
-                 Insert ▸ Export Configuration to create one, or pick one under \
-                 “Export Configurations” in the Documents browser.",
+                 Insert > Export Configuration to create one, or pick one under \
+                 'Export Configurations' in the Documents browser.",
             )
             .weak(),
         );
@@ -245,7 +245,7 @@ fn humanized_size(bits: u8) -> String {
 fn address_layout_editor(ui: &mut egui::Ui, form: &mut ExportConfigForm) {
     ui.horizontal(|ui| {
         ui.strong("Address layout");
-        ui.weak("(low → high)");
+        ui.weak("(low to high)");
         if ui.small_button("reset").clicked() {
             form.field_order = DEFAULT_FIELD_ORDER;
             form.data_reversed = false;
@@ -253,22 +253,14 @@ fn address_layout_editor(ui: &mut egui::Ui, form: &mut ExportConfigForm) {
     });
 
     let mut swap: Option<(usize, usize)> = None;
-    for i in 0..form.field_order.len() {
+    let count = form.field_order.len();
+    for i in 0..count {
         ui.push_id(i, |ui| {
             ui.horizontal(|ui| {
-                if ui
-                    .add_enabled(i > 0, egui::Button::new("▲").small())
-                    .clicked()
-                {
+                if triangle_button(ui, TriangleDir::Up, i > 0) {
                     swap = Some((i, i - 1));
                 }
-                if ui
-                    .add_enabled(
-                        i + 1 < form.field_order.len(),
-                        egui::Button::new("▼").small(),
-                    )
-                    .clicked()
-                {
+                if triangle_button(ui, TriangleDir::Down, i + 1 < count) {
                     swap = Some((i, i + 1));
                 }
                 ui.label(field_kind_label(form.field_order[i].kind));
@@ -281,6 +273,57 @@ fn address_layout_editor(ui: &mut egui::Ui, form: &mut ExportConfigForm) {
     }
 
     ui.checkbox(&mut form.data_reversed, "Reverse data bit order");
+}
+
+/// Which way a [`triangle_button`] points.
+#[derive(Clone, Copy)]
+enum TriangleDir {
+    Up,
+    Down,
+}
+
+/// A small button with a **hand-painted** triangle instead of a glyph, so it renders on
+/// any font (the bundled fonts lack the arrow code points — they'd show as tofu boxes).
+/// Returns whether it was clicked; a disabled button (`enabled = false`) is dimmed and
+/// ignores clicks.
+fn triangle_button(ui: &mut egui::Ui, dir: TriangleDir, enabled: bool) -> bool {
+    let size = egui::vec2(20.0, 18.0);
+    let sense = if enabled {
+        egui::Sense::click()
+    } else {
+        egui::Sense::hover()
+    };
+    let (rect, response) = ui.allocate_exact_size(size, sense);
+    if ui.is_rect_visible(rect) {
+        let visuals = ui.style().interact(&response);
+        ui.painter()
+            .rect_filled(rect, visuals.corner_radius, visuals.weak_bg_fill);
+        let color = if enabled {
+            visuals.fg_stroke.color
+        } else {
+            ui.visuals().weak_text_color()
+        };
+        let c = rect.center();
+        let (hw, hh) = (4.0, 3.5);
+        let points = match dir {
+            TriangleDir::Up => vec![
+                egui::pos2(c.x, c.y - hh),
+                egui::pos2(c.x - hw, c.y + hh),
+                egui::pos2(c.x + hw, c.y + hh),
+            ],
+            TriangleDir::Down => vec![
+                egui::pos2(c.x - hw, c.y - hh),
+                egui::pos2(c.x + hw, c.y - hh),
+                egui::pos2(c.x, c.y + hh),
+            ],
+        };
+        ui.painter().add(egui::Shape::convex_polygon(
+            points,
+            color,
+            egui::Stroke::NONE,
+        ));
+    }
+    enabled && response.clicked()
 }
 
 /// The human label for an address field kind.

@@ -245,7 +245,7 @@ fn show_document_tree(
                         ));
                         ui.close();
                     }
-                    if ui.button("Rename…").clicked() {
+                    if ui.button("Rename...").clicked() {
                         actions.push(BrowserAction::RenameGlyphSet(glyph_set.id));
                         ui.close();
                     }
@@ -288,7 +288,7 @@ fn page_context_menu(
     page: &PageNode,
     actions: &mut Vec<BrowserAction>,
 ) {
-    if ui.button("Rename…").clicked() {
+    if ui.button("Rename...").clicked() {
         actions.push(BrowserAction::RenamePage(glyph_set.id, page.id));
         ui.close();
     }
