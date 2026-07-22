@@ -71,6 +71,19 @@ pub enum ExportError {
         "export config {config:?}: output format {name:?} is not supported yet (v1 is raw binary)"
     )]
     UnsupportedOutputFormat { config: String, name: String },
+    /// The configured output size is not a power of two (spec/10 §10.9).
+    #[error("export config {config:?}: output size {size} bytes is not a power of two")]
+    OutputSizeNotPowerOfTwo { config: String, size: u64 },
+    /// The configured output size is smaller than the natural image, which cannot fit.
+    #[error(
+        "export config {config:?}: output size {size} bytes is smaller than the {natural}-byte \
+         image"
+    )]
+    OutputSizeTooSmall {
+        config: String,
+        size: u64,
+        natural: u64,
+    },
 }
 
 /// Which glyph axis the address scans; the other axis comes out on the data bits.
@@ -407,7 +420,29 @@ pub fn validate_export(
         }
     }
 
-    let output_bytes = words * data_bits.div_ceil(8).max(1) as u64;
+    let natural_bytes = words * data_bits.div_ceil(8).max(1) as u64;
+    // The reported size is the padded output when one is configured; a power-of-two size
+    // no smaller than the natural image is required (spec/10 §10.9).
+    let output_bytes = match config.output_size {
+        None => natural_bytes,
+        Some(size) => {
+            let size = size as u64;
+            if !size.is_power_of_two() {
+                return Err(ExportError::OutputSizeNotPowerOfTwo {
+                    config: name.clone(),
+                    size,
+                });
+            }
+            if size < natural_bytes {
+                return Err(ExportError::OutputSizeTooSmall {
+                    config: name.clone(),
+                    size,
+                    natural: natural_bytes,
+                });
+            }
+            size
+        }
+    };
 
     Ok(ExportSummary {
         scan,
@@ -419,6 +454,27 @@ pub fn validate_export(
         pages: config.source.pages.len(),
         output_bytes,
     })
+}
+
+/// Renders `config` to its final ROM bytes: validate → generate → encode → pad to the
+/// configured [`output_size`](ExportConfig::output_size) with the
+/// [`fill_byte`](ExportConfig::fill_byte) (spec/10 §10.9). The one entry point the CLI
+/// and GUI use to produce a `.bin`; it never emits bytes from a config that isn't a
+/// valid strict-1:1 mapping.
+pub fn render_rom(
+    source: &GlyphSet,
+    config: &ExportConfig,
+    limits: &Limits,
+) -> Result<Vec<u8>, ExportError> {
+    let summary = validate_export(source, config, limits)?;
+    let image = generate_image(source, config, limits)?;
+    let mut bytes = encode_raw_binary(&image, summary.data_bits);
+    // `validate_export` proved the size (when set) is a power of two ≥ the natural image,
+    // so this only ever grows the buffer, padding the tail with the fill byte.
+    if let Some(size) = config.output_size {
+        bytes.resize(size as usize, config.fill_byte);
+    }
+    Ok(bytes)
 }
 
 /// Which addressed axis a row/column data pixel reads.
@@ -522,6 +578,8 @@ pub fn row_scan_config(
             output_bits,
         },
         output_format: OutputFormatConfig::RawBinary,
+        output_size: None,
+        fill_byte: fontspace_model::DEFAULT_FILL_BYTE,
     }
 }
 
@@ -579,6 +637,8 @@ pub fn column_scan_config(
             output_bits,
         },
         output_format: OutputFormatConfig::RawBinary,
+        output_size: None,
+        fill_byte: fontspace_model::DEFAULT_FILL_BYTE,
     }
 }
 
@@ -661,6 +721,58 @@ mod tests {
         for byte in &bytes[8..16] {
             assert_eq!(*byte, 0, "code 1 is undrawn → blank");
         }
+    }
+
+    #[test]
+    fn render_rom_pads_to_output_size_with_the_fill_byte() {
+        let mut ids = SequentialIdGen::new();
+        let (mut set, pages) = glyph_set(&mut ids, GlyphSize::new(8, 8), 1);
+        draw(&mut set, 0, 0, &[(0, 0), (7, 0)]);
+        let mut config = row_scan_config(&mut ids, "rom", &set, pages, 1);
+        // Natural image is 16 bytes; pad to a 64-byte EEPROM with 0xEE.
+        config.output_size = Some(64);
+        config.fill_byte = 0xEE;
+
+        let summary = validate_export(&set, &config, &Limits::default()).unwrap();
+        assert_eq!(summary.output_bytes, 64, "summary reports the padded size");
+
+        let bytes = render_rom(&set, &config, &Limits::default()).unwrap();
+        assert_eq!(bytes.len(), 64);
+        // The real image survives; row 0 of code 0 is 0b1000_0001.
+        assert_eq!(bytes[0], 0b1000_0001);
+        // Everything past the natural 16 bytes is the fill.
+        assert!(bytes[16..].iter().all(|&b| b == 0xEE), "tail is fill");
+    }
+
+    #[test]
+    fn validate_rejects_a_non_power_of_two_output_size() {
+        let mut ids = SequentialIdGen::new();
+        let (set, pages) = glyph_set(&mut ids, GlyphSize::new(8, 8), 1);
+        let mut config = row_scan_config(&mut ids, "rom", &set, pages, 1);
+        config.output_size = Some(48); // not a power of two
+        let err = validate_export(&set, &config, &Limits::default()).unwrap_err();
+        assert!(matches!(
+            err,
+            ExportError::OutputSizeNotPowerOfTwo { size: 48, .. }
+        ));
+    }
+
+    #[test]
+    fn validate_rejects_an_output_size_smaller_than_the_image() {
+        let mut ids = SequentialIdGen::new();
+        let (set, pages) = glyph_set(&mut ids, GlyphSize::new(8, 8), 1);
+        let mut config = row_scan_config(&mut ids, "rom", &set, pages, 1);
+        // Natural size is 16 bytes; 8 can't hold it.
+        config.output_size = Some(8);
+        let err = validate_export(&set, &config, &Limits::default()).unwrap_err();
+        assert!(matches!(
+            err,
+            ExportError::OutputSizeTooSmall {
+                size: 8,
+                natural: 16,
+                ..
+            }
+        ));
     }
 
     #[test]
@@ -851,6 +963,8 @@ mod tests {
                 ],
             },
             output_format: OutputFormatConfig::RawBinary,
+            output_size: None,
+            fill_byte: fontspace_model::DEFAULT_FILL_BYTE,
         };
 
         // Address 0: pixel_x=0; A1 raw 0, inverted → code bit set → code 1 (undrawn), so

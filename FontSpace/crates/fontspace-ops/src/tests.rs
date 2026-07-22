@@ -1244,6 +1244,8 @@ fn sample_export_config(
             }],
         },
         output_format: OutputFormatConfig::RawBinary,
+        output_size: None,
+        fill_byte: fontspace_model::DEFAULT_FILL_BYTE,
     }
 }
 

@@ -732,6 +732,63 @@ fn add_export_config(path: &std::path::Path, config: &str, code_bits: &str) {
 }
 
 #[test]
+fn cli_export_pads_to_output_size_with_fill_byte() {
+    // add-export-config --output-size/--fill-byte persist; export pads the natural image
+    // up to the size with the fill byte (spec/10 §10.9).
+    let doc = sample_doc();
+    let path = temp_path("export-padded");
+    fs::write(&path, fontspace_json::save(&doc)).unwrap();
+    let status = Command::new(env!("CARGO_BIN_EXE_fontspace"))
+        .args([
+            "add-export-config",
+            path.to_str().unwrap(),
+            "--name",
+            "rom",
+            "--glyph-set",
+            "gs",
+            "--pages",
+            "Regular",
+            "--code-bits",
+            "7",
+            "--output-size",
+            "0x4000", // 16384
+            "--fill-byte",
+            "0xEE",
+            "--seq",
+        ])
+        .status()
+        .unwrap();
+    assert!(status.success());
+
+    let bin = path.parent().unwrap().join("rom.bin");
+    let out = Command::new(env!("CARGO_BIN_EXE_fontspace"))
+        .args([
+            "export",
+            path.to_str().unwrap(),
+            "--config",
+            "rom",
+            "--output",
+            bin.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let bytes = fs::read(&bin).unwrap();
+    assert_eq!(bytes.len(), 16384, "padded to the configured size");
+    // The natural 8×8 / 128-code image is 1024 bytes (3 row + 7 code address bits);
+    // everything past it is fill.
+    assert!(
+        bytes[1024..].iter().all(|&b| b == 0xEE),
+        "the padding is the fill byte"
+    );
+    fs::remove_dir_all(path.parent().unwrap()).ok();
+}
+
+#[test]
 fn cli_export_matches_library_export() {
     use fontspace_export::{encode_raw_binary, generate_image, row_scan_config, validate_export};
     use fontspace_model::Limits;

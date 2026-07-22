@@ -115,7 +115,9 @@
           }
         ]
       },
-      "output_format": "raw_binary"
+      "output_format": "raw_binary",
+      "output_size": 4096,
+      "fill_byte": 170
     }
   ]
 }

@@ -11,8 +11,8 @@
 use std::path::{Path, PathBuf};
 
 use fontspace_export::{
-    ExportError, ExportSummary, ScanDirection, column_scan_config, encode_raw_binary,
-    generate_image, row_scan_config, validate_export,
+    ExportError, ExportSummary, ScanDirection, column_scan_config, render_rom, row_scan_config,
+    validate_export,
 };
 use fontspace_json::{LoadOutcome, load_fragment, save_fragment};
 use fontspace_model::{
@@ -866,10 +866,9 @@ impl AppState {
             .content
             .glyph_set(config.source.glyph_set_id)
             .ok_or("Export source glyph set is missing")?;
-        let limits = Limits::default();
-        let summary = validate_export(glyph_set, config, &limits).map_err(|err| err.to_string())?;
-        let image = generate_image(glyph_set, config, &limits).map_err(|err| err.to_string())?;
-        Ok(encode_raw_binary(&image, summary.data_bits))
+        // `render_rom` validates, generates, encodes, and pads to the configured output
+        // size with the fill byte (spec/10 §10.9).
+        render_rom(glyph_set, config, &Limits::default()).map_err(|err| err.to_string())
     }
 
     /// Records a committed change to the **active** document on the undo stack
