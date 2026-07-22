@@ -43,6 +43,9 @@ pub enum FontCommand {
     ReorderCharacterEntries(ReorderCharacterEntries),
     RecodeCharacterEntry(RecodeCharacterEntry),   // may orphan glyphs; warns
     AddGlyphSet(AddGlyphSet),                     // new top-level glyph set (optionally with a first page)
+    RenameGlyphSet(RenameGlyphSet),               // rename in place (no-op when unchanged)
+    DuplicateGlyphSet(DuplicateGlyphSet),         // deep copy with fresh ids, after the original
+    RemoveGlyphSet(RemoveGlyphSet),               // remove whole; undo restores it
     AddExportConfig(AddExportConfig),             // insert an already-built export config
     ReplaceExportConfig(ReplaceExportConfig),     // swap a whole config in place, matched by id
     ReplaceExportComponent(ReplaceExportComponent),
@@ -142,7 +145,7 @@ pub enum ObjectChange {
 }
 ```
 
-`GlyphSetChanged` and `ExportConfigChanged` share the guide-change shape — `{ index, before: Option<T>, after: Option<T> }` — where `before = None` is an add, `after = None` a remove, and both `Some` a replace; the object is matched by its own stable `id`, and `index` records its position in the document vector so an add (or the undo of a remove) restores object order exactly (order is document identity — it round-trips through canonical JSON). `AddGlyphSet` mints the set's id (and its first page's id, when one is requested) and rejects a dangling character-set reference before mutating. `AddExportConfig`/`ReplaceExportConfig` take an already-constructed `ExportConfig` (the caller builds it — e.g. from a scan preset in `fontspace-export`), so these ops own only the document-level insert/replace and its invertible record.
+`GlyphSetChanged` and `ExportConfigChanged` share the guide-change shape — `{ index, before: Option<T>, after: Option<T> }` — where `before = None` is an add, `after = None` a remove, and both `Some` a replace; the object is matched by its own stable `id`, and `index` records its position in the document vector so an add (or the undo of a remove) restores object order exactly (order is document identity — it round-trips through canonical JSON). `AddGlyphSet` mints the set's id (and its first page's id, when one is requested) and rejects a dangling character-set reference before mutating. `RenameGlyphSet`, `DuplicateGlyphSet`, and `RemoveGlyphSet` all emit one `GlyphSetChanged`: rename is a replace (a no-op when the name is unchanged), remove captures the whole set at its index (undo restores it — an export config that sourced it is left dangling, surfaced only at export-time validation, never a load error), and duplicate is an add whose payload is a **deep copy with fresh ids** (glyph set, pages, guides) inserted right after the original, referencing the same character set. `AddExportConfig`/`ReplaceExportConfig` take an already-constructed `ExportConfig` (the caller builds it — e.g. from a scan preset in `fontspace-export`), so these ops own only the document-level insert/replace and its invertible record.
 
 ```rust
 pub struct GlyphChange {
