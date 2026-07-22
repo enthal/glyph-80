@@ -240,6 +240,8 @@ fn to_stored_export_config(export_config: &ExportConfig) -> StoredExportConfig {
                 StoredOutputFormat::Unsupported { name: name.clone() }
             }
         },
+        output_size: export_config.output_size,
+        fill_byte: export_config.fill_byte,
     }
 }
 
@@ -459,6 +461,8 @@ fn from_stored_export_config(stored: StoredExportConfig) -> Result<ExportConfig,
         address_map,
         data_map,
         output_format,
+        output_size,
+        fill_byte,
     } = stored;
     let context = format!("export config {name:?}");
     Ok(ExportConfig {
@@ -493,6 +497,8 @@ fn from_stored_export_config(stored: StoredExportConfig) -> Result<ExportConfig,
             StoredOutputFormat::RawBinary => OutputFormatConfig::RawBinary,
             StoredOutputFormat::Unsupported { name } => OutputFormatConfig::Unsupported { name },
         },
+        output_size,
+        fill_byte,
         name,
         description,
     })

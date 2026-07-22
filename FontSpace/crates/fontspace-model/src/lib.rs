@@ -30,8 +30,8 @@ pub use character_set::{CharacterEntry, CharacterSet};
 pub use color::Rgba;
 pub use document::{CURRENT_FORMAT_VERSION, FontSpace, FontSpaceMetadata};
 pub use export_config::{
-    AddressBitSource, AddressMap, CoordinateExpr, DataMap, ExportConfig, ExportSourceSpec,
-    OutputBitSource, OutputFormatConfig,
+    AddressBitSource, AddressMap, CoordinateExpr, DEFAULT_FILL_BYTE, DataMap, ExportConfig,
+    ExportSourceSpec, OutputBitSource, OutputFormatConfig,
 };
 pub use fragment::{FontSpaceFragment, FragmentGlyph, GlyphFragment};
 pub use geometry::{GlyphSize, GlyphSizeError, GuideAxis};

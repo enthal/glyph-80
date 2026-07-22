@@ -198,6 +198,9 @@ fn export_doc() -> FontSpace {
             ],
         },
         output_format: OutputFormatConfig::RawBinary,
+        // Non-default output size + fill exercise those fields' round-trip.
+        output_size: Some(4096),
+        fill_byte: 0xAA,
     };
 
     let mut doc = FontSpace::new(&mut ids, "Export", "document with an export config");

@@ -108,6 +108,17 @@ pub(crate) struct StoredExportConfig {
     pub address_map: StoredAddressMap,
     pub data_map: StoredDataMap,
     pub output_format: StoredOutputFormat,
+    /// Target size in bytes, or absent/`null` for the natural image size (spec/10 §10.9).
+    #[serde(default)]
+    pub output_size: Option<u32>,
+    /// Padding/hole byte; defaults to the erased-EEPROM `0xFF` for documents predating
+    /// this field.
+    #[serde(default = "default_fill_byte")]
+    pub fill_byte: u8,
+}
+
+fn default_fill_byte() -> u8 {
+    fontspace_model::DEFAULT_FILL_BYTE
 }
 
 #[derive(Serialize, Deserialize)]

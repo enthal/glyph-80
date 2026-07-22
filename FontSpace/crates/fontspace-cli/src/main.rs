@@ -14,8 +14,7 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand};
 
 use fontspace_export::{
-    ExportError, column_scan_config, encode_raw_binary, generate_image, row_scan_config,
-    validate_export,
+    ExportError, column_scan_config, render_rom, row_scan_config, validate_export,
 };
 use fontspace_json::{
     JsonError, load as load_json, load_fragment, save as save_json, write_fragment,
@@ -183,6 +182,15 @@ enum Command {
         /// or `column` (spec/10 §10.4).
         #[arg(long, default_value = "row")]
         scan: String,
+        /// Pad the image to this many bytes (a power of two, ≥ the natural size) with the
+        /// fill byte, to fill a larger EEPROM (spec/10 §10.9). Accepts `0x`-hex. Omit for
+        /// the natural size.
+        #[arg(long)]
+        output_size: Option<String>,
+        /// Byte written to padding (and, later, address holes). Accepts `0x`-hex;
+        /// defaults to 0xFF (erased EEPROM).
+        #[arg(long)]
+        fill_byte: Option<String>,
     },
     /// Validate that an export config is a strict 1:1 ROM and print its shape (spec/10
     /// §10.7).
@@ -243,6 +251,28 @@ enum CliError {
     UnknownScan(String),
     #[error("--output is required to write the ROM image (omit it only with --dry-run)")]
     OutputRequired,
+    #[error("{0:?} is not a valid number (use decimal or 0x-hex)")]
+    BadNumber(String),
+}
+
+/// Parses an unsigned integer from decimal or `0x`-hex text (CLI numeric flags).
+fn parse_u32(text: &str) -> Result<u32, CliError> {
+    let text = text.trim();
+    match text.strip_prefix("0x").or_else(|| text.strip_prefix("0X")) {
+        Some(hex) => u32::from_str_radix(hex, 16),
+        None => text.parse::<u32>(),
+    }
+    .map_err(|_| CliError::BadNumber(text.to_string()))
+}
+
+/// Parses a byte from decimal or `0x`-hex text (e.g. `--fill-byte 0xFF`).
+fn parse_u8(text: &str) -> Result<u8, CliError> {
+    let text = text.trim();
+    match text.strip_prefix("0x").or_else(|| text.strip_prefix("0X")) {
+        Some(hex) => u8::from_str_radix(hex, 16),
+        None => text.parse::<u8>(),
+    }
+    .map_err(|_| CliError::BadNumber(text.to_string()))
 }
 
 fn main() -> ExitCode {
@@ -476,19 +506,29 @@ fn run(cli: Cli) -> Result<(), CliError> {
             pages,
             code_bits,
             scan,
+            output_size,
+            fill_byte,
         } => {
             let mut doc = load_document(&path)?;
             let glyph_set_id = resolve_glyph_set(&doc, &glyph_set)?;
+            let output_size = output_size.as_deref().map(parse_u32).transpose()?;
+            let fill_byte = match fill_byte.as_deref() {
+                Some(text) => parse_u8(text)?,
+                None => fontspace_model::DEFAULT_FILL_BYTE,
+            };
             let config = {
                 let gs = doc
                     .glyph_set(glyph_set_id)
                     .ok_or_else(|| ParseError::GlyphSetNotFound(glyph_set.clone()))?;
                 let page_ids = pages_of(gs, &pages)?;
-                match scan.as_str() {
+                let mut config = match scan.as_str() {
                     "row" => row_scan_config(ids.as_mut(), &name, gs, page_ids, code_bits),
                     "column" => column_scan_config(ids.as_mut(), &name, gs, page_ids, code_bits),
                     other => return Err(CliError::UnknownScan(other.to_string())),
-                }
+                };
+                config.output_size = output_size;
+                config.fill_byte = fill_byte;
+                config
             };
             // Insert through the domain op — the same invertible path the GUI uses —
             // rather than pushing onto the vector directly (spec/07 §7.2).
@@ -532,8 +572,9 @@ fn run(cli: Cli) -> Result<(), CliError> {
                 // `--output` is only needed when actually writing, so it is required
                 // here rather than by clap — a dry run validates without one.
                 let output = output.ok_or(CliError::OutputRequired)?;
-                let image = generate_image(glyph_set, export_config, &limits)?;
-                let bytes = encode_raw_binary(&image, summary.data_bits);
+                // `render_rom` re-validates, generates, encodes, and pads to the
+                // configured output size with the fill byte (spec/10 §10.9).
+                let bytes = render_rom(glyph_set, export_config, &limits)?;
                 fs::write(&output, &bytes).map_err(|source| CliError::WriteFile {
                     path: output.display().to_string(),
                     source,

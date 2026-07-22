@@ -2,7 +2,8 @@
 //! ROM/programmer image from a glyph set by addressing it **by character `code`**.
 //!
 //! **Milestone 5, strict-1:1 subset.** This carries the fields the v1 1:1 export needs
-//! — the source binding, the address map, the data map, and the output format. The
+//! — the source binding, the address map, the data map, the output format, and the
+//! output size + fill byte (spec/10 §10.9). The
 //! geometry pipeline of spec/10 §10.8 (`transforms`, `packing`, `memory_image`) is not
 //! yet represented; those fields extend this struct later via serde defaults (no
 //! migration). The evaluation, the 1:1 coverage validator, and the encoders live in the
@@ -26,7 +27,19 @@ pub struct ExportConfig {
     pub data_map: DataMap,
     /// The programmer-file encoding (spec/10 §10.9). v1: `RawBinary`.
     pub output_format: OutputFormatConfig,
+    /// Target output size in **bytes**, or `None` for the natural size (the addressed
+    /// image alone). When set it must be a power of two and no smaller than the natural
+    /// image; the image is padded up to it with [`ExportConfig::fill_byte`] so a smaller
+    /// ROM fills a larger EEPROM (spec/10 §10.9).
+    pub output_size: Option<u32>,
+    /// The byte written to any output address not produced by the image — the padding up
+    /// to `output_size` (and, once memory-mapping lands, address holes). Defaults to
+    /// `0xFF`, the erased-EEPROM value.
+    pub fill_byte: u8,
 }
+
+/// The erased-EEPROM byte, the default [`ExportConfig::fill_byte`].
+pub const DEFAULT_FILL_BYTE: u8 = 0xFF;
 
 /// The source of an export: one glyph set and the ordered pages that the address map's
 /// [`AddressBitSource::PageBit`]s index (page `n` = `pages[n]`). Referencing the glyph
