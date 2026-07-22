@@ -23,13 +23,15 @@ use fontspace_model::{
 };
 
 use fontspace_ops::{
-    AddExportConfig, AddGlyphSet, AddGuide, ChangeSet, ClearGlyphs, FontSpaceWarning, GlyphMapping,
-    GlyphRef, GlyphSelector, GlyphSizeConversion, InvertGlyphs, MoveGuide, PageSelector,
-    PasteGlyphs, RemoveCharacterEntry, RemoveGuide, RenameGuide, ReplaceExportConfig,
-    SetGuideVisible, SetPixels, ShiftGlyphs, add_export_config, add_glyph_set, add_guide,
-    apply_change_set, clear_glyphs, invert_glyphs, move_guide, paste_glyphs,
-    remove_character_entry, remove_guide, rename_guide, replace_export_config, set_guide_visible,
-    set_pixels, shift_glyphs, undo,
+    AddExportConfig, AddGlyphSet, AddGuide, AddPage, ChangeSet, ClearGlyphs, DuplicateGlyphSet,
+    DuplicatePage, FontSpaceWarning, GlyphMapping, GlyphRef, GlyphSelector, GlyphSizeConversion,
+    InvertGlyphs, MoveGuide, MovePage, PageSelector, PasteGlyphs, RemoveCharacterEntry,
+    RemoveGlyphSet, RemoveGuide, RemovePages, RenameGlyphSet, RenameGuide, RenamePage,
+    ReplaceExportConfig, SetGuideVisible, SetPixels, ShiftGlyphs, add_export_config, add_glyph_set,
+    add_guide, add_page, apply_change_set, clear_glyphs, duplicate_glyph_set, duplicate_page,
+    invert_glyphs, move_guide, move_page, paste_glyphs, remove_character_entry, remove_glyph_set,
+    remove_guide, remove_pages, rename_glyph_set, rename_guide, rename_page, replace_export_config,
+    set_guide_visible, set_pixels, shift_glyphs, undo,
 };
 
 use crate::editor::geometry::GridLevel;
@@ -66,6 +68,13 @@ pub struct ExportConfigForm {
     pub output_size: Option<u32>,
     /// Padding byte for [`output_size`](Self::output_size).
     pub fill_byte: u8,
+}
+
+/// What a pending rename targets (spec/12 §12.2): a glyph set or a page within one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RenameTarget {
+    GlyphSet(GlyphSetId),
+    Page(GlyphSetId, PageId),
 }
 
 /// A file action that would discard the active document's unsaved edits, held pending
@@ -158,6 +167,9 @@ pub struct AppState {
     /// (spec/12 §12.11), re-initialized when the selection moves. UI state; committed to
     /// the document only on **Apply**.
     export_form: Option<ExportConfigForm>,
+    /// An in-progress rename from the document browser (spec/12 §12.2): the target and its
+    /// editable name buffer, or `None` when the rename dialog is closed.
+    rename: Option<(RenameTarget, String)>,
 }
 
 impl Default for AppState {
@@ -197,6 +209,7 @@ impl AppState {
             shift_wrap: false,
             selected_export_config: None,
             export_form: None,
+            rename: None,
         }
     }
 
@@ -720,6 +733,239 @@ impl AppState {
             self.export_form = None;
         }
         self.selected_export_config = Some(id);
+    }
+
+    // --- Glyph-set & page management (spec/12 §12.2). Thin wrappers: invoke the domain
+    // op, record it for undo, keep the selection resolving, and point the editor at the
+    // result. Each is one undo entry. ---
+
+    /// Renames a glyph set (spec/07 §7.2); a no-op when the name is unchanged.
+    pub fn rename_glyph_set(&mut self, glyph_set_id: GlyphSetId, name: String) {
+        match rename_glyph_set(
+            &mut self.active.content,
+            &RenameGlyphSet { glyph_set_id, name },
+        ) {
+            Ok(change_set) => self.record(change_set),
+            Err(err) => self.set_error(format!("Rename failed: {err}")),
+        }
+    }
+
+    /// Duplicates a glyph set (deep copy, fresh ids) and selects the copy's first page.
+    pub fn duplicate_glyph_set(&mut self, glyph_set_id: GlyphSetId, name: String) {
+        let index = self
+            .active
+            .content
+            .glyph_sets
+            .iter()
+            .position(|gs| gs.id == glyph_set_id);
+        match duplicate_glyph_set(
+            &mut self.active.content,
+            &DuplicateGlyphSet { glyph_set_id, name },
+            self.ids.as_mut(),
+        ) {
+            Ok(change_set) => {
+                self.record(change_set);
+                let target = index
+                    .and_then(|i| self.active.content.glyph_sets.get(i + 1))
+                    .map(|copy| (copy.id, copy.pages.first().map(|page| page.id)));
+                if let Some((set_id, Some(page_id))) = target {
+                    self.select_page(set_id, page_id);
+                }
+                self.set_status("Duplicated glyph set");
+            }
+            Err(err) => self.set_error(format!("Duplicate failed: {err}")),
+        }
+    }
+
+    /// Removes a glyph set with everything under it, then repoints the selection if it
+    /// no longer resolves (spec/07 §7.2).
+    pub fn remove_glyph_set(&mut self, glyph_set_id: GlyphSetId) {
+        match remove_glyph_set(&mut self.active.content, &RemoveGlyphSet { glyph_set_id }) {
+            Ok(change_set) => {
+                self.record(change_set);
+                self.ensure_selection_resolves();
+                self.set_status("Removed glyph set");
+            }
+            Err(err) => self.set_error(format!("Remove failed: {err}")),
+        }
+    }
+
+    /// Adds an empty page to a glyph set and selects it (spec/07 §7.2).
+    pub fn add_page(&mut self, glyph_set_id: GlyphSetId, name: String) {
+        match add_page(
+            &mut self.active.content,
+            &AddPage {
+                glyph_set_id,
+                name,
+                description: String::new(),
+                at_index: None,
+            },
+            self.ids.as_mut(),
+        ) {
+            Ok(change_set) => {
+                self.record(change_set);
+                if let Some(page_id) = self
+                    .active
+                    .content
+                    .glyph_set(glyph_set_id)
+                    .and_then(|gs| gs.pages.last())
+                    .map(|page| page.id)
+                {
+                    self.select_page(glyph_set_id, page_id);
+                }
+                self.set_status("Added page");
+            }
+            Err(err) => self.set_error(format!("Add page failed: {err}")),
+        }
+    }
+
+    /// Renames a page (spec/07 §7.2); a no-op when the name is unchanged.
+    pub fn rename_page(&mut self, glyph_set_id: GlyphSetId, page_id: PageId, name: String) {
+        match rename_page(
+            &mut self.active.content,
+            &RenamePage {
+                glyph_set_id,
+                page_id,
+                name,
+            },
+        ) {
+            Ok(change_set) => self.record(change_set),
+            Err(err) => self.set_error(format!("Rename failed: {err}")),
+        }
+    }
+
+    /// Duplicates a page (fresh ids) and selects the copy (spec/07 §7.2).
+    pub fn duplicate_page(&mut self, glyph_set_id: GlyphSetId, page_id: PageId, name: String) {
+        let index = self
+            .active
+            .content
+            .glyph_set(glyph_set_id)
+            .and_then(|gs| gs.pages.iter().position(|page| page.id == page_id));
+        match duplicate_page(
+            &mut self.active.content,
+            &DuplicatePage {
+                glyph_set_id,
+                page_id,
+                name,
+            },
+            self.ids.as_mut(),
+        ) {
+            Ok(change_set) => {
+                self.record(change_set);
+                let copy_id = index.and_then(|i| {
+                    self.active
+                        .content
+                        .glyph_set(glyph_set_id)
+                        .and_then(|gs| gs.pages.get(i + 1))
+                        .map(|page| page.id)
+                });
+                if let Some(copy_id) = copy_id {
+                    self.select_page(glyph_set_id, copy_id);
+                }
+                self.set_status("Duplicated page");
+            }
+            Err(err) => self.set_error(format!("Duplicate failed: {err}")),
+        }
+    }
+
+    /// Removes a single page, repointing the selection if it no longer resolves.
+    pub fn remove_page(&mut self, glyph_set_id: GlyphSetId, page_id: PageId) {
+        match remove_pages(
+            &mut self.active.content,
+            &RemovePages {
+                glyph_set_id,
+                pages: PageSelector::Id(page_id),
+            },
+        ) {
+            Ok(change_set) => {
+                self.record(change_set);
+                self.ensure_selection_resolves();
+                self.set_status("Removed page");
+            }
+            Err(err) => self.set_error(format!("Remove page failed: {err}")),
+        }
+    }
+
+    /// Moves a page to another glyph set of equal geometry and selects it there (spec/07
+    /// §7.2). Reports a geometry mismatch rather than moving.
+    pub fn move_page(
+        &mut self,
+        from_glyph_set_id: GlyphSetId,
+        page_id: PageId,
+        to_glyph_set_id: GlyphSetId,
+    ) {
+        match move_page(
+            &mut self.active.content,
+            &MovePage {
+                from_glyph_set_id,
+                page_id,
+                to_glyph_set_id,
+                at_index: None,
+            },
+        ) {
+            Ok(change_set) => {
+                self.record(change_set);
+                self.select_page(to_glyph_set_id, page_id);
+                self.set_status("Moved page");
+            }
+            Err(err) => self.set_error(format!("Move failed: {err}")),
+        }
+    }
+
+    /// Repoints the selection at a sensible default when it no longer resolves (e.g. after
+    /// removing the selected glyph set or page); clears interaction tied to the old target.
+    fn ensure_selection_resolves(&mut self) {
+        if self.selected_context().is_none() {
+            if let Some(selection) = default_selection(&self.active.content) {
+                self.active.selection = selection;
+            }
+            self.clear_selection();
+            self.clear_page_selection();
+        }
+    }
+
+    /// Opens the rename dialog for `target`, prefilling its current name (spec/12 §12.2).
+    /// A no-op if the target no longer resolves.
+    pub fn begin_rename(&mut self, target: RenameTarget) {
+        let current = match target {
+            RenameTarget::GlyphSet(id) => {
+                self.active.content.glyph_set(id).map(|gs| gs.name.clone())
+            }
+            RenameTarget::Page(gs, page) => self
+                .active
+                .content
+                .glyph_set(gs)
+                .and_then(|gs| gs.page_of_id(page))
+                .map(|page| page.name.clone()),
+        };
+        if let Some(name) = current {
+            self.rename = Some((target, name));
+        }
+    }
+
+    /// The rename in progress — its target and the editable name buffer — for the dialog.
+    pub fn rename_in_progress(&mut self) -> Option<(RenameTarget, &mut String)> {
+        self.rename.as_mut().map(|(target, name)| (*target, name))
+    }
+
+    /// Applies the pending rename (if any) as one undo entry, closing the dialog. An
+    /// empty/whitespace name is ignored (the dialog's Rename button guards this too).
+    pub fn confirm_rename(&mut self) {
+        let Some((target, name)) = self.rename.take() else {
+            return;
+        };
+        if name.trim().is_empty() {
+            return;
+        }
+        match target {
+            RenameTarget::GlyphSet(id) => self.rename_glyph_set(id, name),
+            RenameTarget::Page(gs, page) => self.rename_page(gs, page, name),
+        }
+    }
+
+    /// Closes the rename dialog without applying it.
+    pub fn cancel_rename(&mut self) {
+        self.rename = None;
     }
 
     // --- Export Configuration view (spec/12 §12.11/§12.12). The view edits a working
@@ -2467,6 +2713,118 @@ mod tests {
 
         state.undo();
         assert_eq!(state.document().glyph_sets.len(), before);
+    }
+
+    #[test]
+    fn add_page_selects_the_new_page_and_undoes() {
+        let mut state = editable_state();
+        let glyph_set = state.selection().glyph_set_id;
+        let before = state.document().glyph_set(glyph_set).unwrap().pages.len();
+
+        state.add_page(glyph_set, "Bold".to_string());
+        let gs = state.document().glyph_set(glyph_set).unwrap();
+        assert_eq!(gs.pages.len(), before + 1);
+        assert_eq!(state.selection().page_id, gs.pages.last().unwrap().id);
+
+        state.undo();
+        assert_eq!(
+            state.document().glyph_set(glyph_set).unwrap().pages.len(),
+            before
+        );
+    }
+
+    #[test]
+    fn rename_dialog_flow_applies_and_undoes() {
+        let mut state = editable_state();
+        let glyph_set = state.selection().glyph_set_id;
+        let original = state.document().glyph_set(glyph_set).unwrap().name.clone();
+
+        state.begin_rename(RenameTarget::GlyphSet(glyph_set));
+        {
+            let (_target, name) = state.rename_in_progress().expect("rename armed");
+            *name = "Renamed".to_string();
+        }
+        state.confirm_rename();
+        assert_eq!(
+            state.document().glyph_set(glyph_set).unwrap().name,
+            "Renamed"
+        );
+        assert!(
+            state.rename_in_progress().is_none(),
+            "dialog closed on confirm"
+        );
+
+        state.undo();
+        assert_eq!(
+            state.document().glyph_set(glyph_set).unwrap().name,
+            original
+        );
+    }
+
+    #[test]
+    fn remove_page_repoints_the_selection() {
+        let mut state = editable_state();
+        let glyph_set = state.selection().glyph_set_id;
+        state.add_page(glyph_set, "Bold".to_string()); // selects the new page
+        let removed = state.selection().page_id;
+
+        state.remove_page(glyph_set, removed);
+        // The selection resolves again, to a surviving page.
+        assert!(state.selected_context().is_some());
+        assert_ne!(state.selection().page_id, removed);
+    }
+
+    #[test]
+    fn duplicate_glyph_set_selects_the_copy() {
+        let mut state = editable_state();
+        let glyph_set = state.selection().glyph_set_id;
+        state.duplicate_glyph_set(glyph_set, "Copy".to_string());
+        assert_eq!(state.document().glyph_sets.len(), 2);
+        assert_ne!(
+            state.selection().glyph_set_id,
+            glyph_set,
+            "selection followed the copy"
+        );
+        assert_eq!(
+            state
+                .document()
+                .glyph_set(state.selection().glyph_set_id)
+                .unwrap()
+                .name,
+            "Copy"
+        );
+    }
+
+    #[test]
+    fn move_page_between_sets_selects_it_in_the_target() {
+        let mut state = editable_state();
+        let source = state.selection().glyph_set_id;
+        let page = state.selection().page_id;
+        let character_set = state.selected_character_set().unwrap().id;
+        // A second 8×8 glyph set (same geometry as the starter) to move into.
+        state.add_glyph_set("Two".to_string(), GlyphSize::new(8, 8), character_set);
+        let target = state.document().glyph_sets.last().unwrap().id;
+
+        state.move_page(source, page, target);
+        assert!(
+            state
+                .document()
+                .glyph_set(source)
+                .unwrap()
+                .page_of_id(page)
+                .is_none(),
+            "left the source"
+        );
+        assert!(
+            state
+                .document()
+                .glyph_set(target)
+                .unwrap()
+                .page_of_id(page)
+                .is_some(),
+            "arrived in the target"
+        );
+        assert_eq!(state.selection().glyph_set_id, target);
     }
 
     #[test]

@@ -208,6 +208,7 @@ impl FontSpaceApp {
 
         self.show_discard_modal(ui.ctx());
         self.show_add_glyph_set_modal(ui.ctx());
+        self.show_rename_modal(ui.ctx());
 
         // A one-line status strip for the last save/open result or error (spec/12
         // §12.12): only present when there is something to report.
@@ -255,6 +256,47 @@ impl FontSpaceApp {
             self.state.cancel_discard();
         } else if discard && let Some(intent) = self.state.take_pending_discard() {
             self.perform_guarded(intent);
+        }
+    }
+
+    /// The "Rename" dialog (spec/12 §12.2) shared by glyph sets and pages: a single text
+    /// field over the pending rename's name buffer, plus Cancel/Rename. Present only when a
+    /// rename is armed (from a document-browser context menu); the buttons set local flags
+    /// so `self.state` is free to mutate after the modal closure.
+    fn show_rename_modal(&mut self, ctx: &egui::Context) {
+        let Some((_target, name)) = self.state.rename_in_progress() else {
+            return;
+        };
+        let mut submit = false;
+        let mut cancel = false;
+        let modal = egui::Modal::new(egui::Id::new("rename_object")).show(ctx, |ui| {
+            ui.set_width(300.0);
+            ui.heading("Rename");
+            ui.add_space(8.0);
+            let response = ui.text_edit_singleline(name);
+            response.request_focus();
+            let can_rename = !name.trim().is_empty();
+            // Enter confirms, matching the Rename button.
+            if can_rename && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                submit = true;
+            }
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                if ui.button("Cancel").clicked() {
+                    cancel = true;
+                }
+                if ui
+                    .add_enabled(can_rename, egui::Button::new("Rename"))
+                    .clicked()
+                {
+                    submit = true;
+                }
+            });
+        });
+        if cancel || modal.should_close() {
+            self.state.cancel_rename();
+        } else if submit {
+            self.state.confirm_rename();
         }
     }
 
