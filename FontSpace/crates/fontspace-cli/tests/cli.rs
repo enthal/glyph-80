@@ -733,8 +733,8 @@ fn add_export_config(path: &std::path::Path, config: &str, code_bits: &str) {
 
 #[test]
 fn cli_export_pads_to_output_size_with_fill_byte() {
-    // add-export-config --output-size/--fill-byte persist; export pads the natural image
-    // up to the size with the fill byte (spec/10 §10.9).
+    // add-export-config --output-address-bits/--fill-byte persist; export pads the natural
+    // image up to 2^bits bytes with the fill byte (spec/10 §10.9).
     let doc = sample_doc();
     let path = temp_path("export-padded");
     fs::write(&path, fontspace_json::save(&doc)).unwrap();
@@ -750,8 +750,8 @@ fn cli_export_pads_to_output_size_with_fill_byte() {
             "Regular",
             "--code-bits",
             "7",
-            "--output-size",
-            "0x4000", // 16384
+            "--output-address-bits",
+            "14", // 2^14 = 16384
             "--fill-byte",
             "0xEE",
             "--seq",

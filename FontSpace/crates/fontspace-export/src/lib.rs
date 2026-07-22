@@ -71,19 +71,21 @@ pub enum ExportError {
         "export config {config:?}: output format {name:?} is not supported yet (v1 is raw binary)"
     )]
     UnsupportedOutputFormat { config: String, name: String },
-    /// The configured output size is not a power of two (spec/10 §10.9).
-    #[error("export config {config:?}: output size {size} bytes is not a power of two")]
-    OutputSizeNotPowerOfTwo { config: String, size: u64 },
-    /// The configured output size is smaller than the natural image, which cannot fit.
+    /// The configured output size (`2^output_address_bits`) is smaller than the natural
+    /// image, which cannot fit (spec/10 §10.9).
     #[error(
-        "export config {config:?}: output size {size} bytes is smaller than the {natural}-byte \
-         image"
+        "export config {config:?}: output size 2^{bits} = {size} bytes is smaller than the \
+         {natural}-byte image"
     )]
     OutputSizeTooSmall {
         config: String,
+        bits: u8,
         size: u64,
         natural: u64,
     },
+    /// The configured output size (`2^output_address_bits`) exceeds the limit (spec/16).
+    #[error("export config {config:?}: output size 2^{bits} bytes exceeds the limit (spec/16)")]
+    OutputSizeTooLarge { config: String, bits: u8 },
 }
 
 /// Which glyph axis the address scans; the other axis comes out on the data bits.
@@ -421,21 +423,28 @@ pub fn validate_export(
     }
 
     let natural_bytes = words * data_bits.div_ceil(8).max(1) as u64;
-    // The reported size is the padded output when one is configured; a power-of-two size
-    // no smaller than the natural image is required (spec/10 §10.9).
-    let output_bytes = match config.output_size {
+    // The reported size is the padded output when one is configured. It is a power of two
+    // by construction (`2^output_address_bits`); it need only be no smaller than the
+    // natural image and within the size limit (spec/10 §10.9).
+    let output_bytes = match config.output_address_bits {
         None => natural_bytes,
-        Some(size) => {
-            let size = size as u64;
-            if !size.is_power_of_two() {
-                return Err(ExportError::OutputSizeNotPowerOfTwo {
+        Some(bits) => {
+            // Cap the exponent so both `1u64 << bits` here and `1usize << bits` in
+            // `render_rom` stay in range (usize may be 32-bit) and the image stays within
+            // the limit. `saturating_sub` keeps a zero/tiny limit from underflowing.
+            let limit_bits = 63u32.saturating_sub(limits.max_output_image_pixels.leading_zeros());
+            let max_bits = limit_bits.min(usize::BITS - 1) as u8;
+            if bits > max_bits {
+                return Err(ExportError::OutputSizeTooLarge {
                     config: name.clone(),
-                    size,
+                    bits,
                 });
             }
+            let size = 1u64 << bits;
             if size < natural_bytes {
                 return Err(ExportError::OutputSizeTooSmall {
                     config: name.clone(),
+                    bits,
                     size,
                     natural: natural_bytes,
                 });
@@ -457,7 +466,7 @@ pub fn validate_export(
 }
 
 /// Renders `config` to its final ROM bytes: validate → generate → encode → pad to the
-/// configured [`output_size`](ExportConfig::output_size) with the
+/// configured [`output_address_bits`](ExportConfig::output_address_bits) with the
 /// [`fill_byte`](ExportConfig::fill_byte) (spec/10 §10.9). The one entry point the CLI
 /// and GUI use to produce a `.bin`; it never emits bytes from a config that isn't a
 /// valid strict-1:1 mapping.
@@ -469,10 +478,10 @@ pub fn render_rom(
     let summary = validate_export(source, config, limits)?;
     let image = generate_image(source, config, limits)?;
     let mut bytes = encode_raw_binary(&image, summary.data_bits);
-    // `validate_export` proved the size (when set) is a power of two ≥ the natural image,
-    // so this only ever grows the buffer, padding the tail with the fill byte.
-    if let Some(size) = config.output_size {
-        bytes.resize(size as usize, config.fill_byte);
+    // `validate_export` proved `2^output_address_bits` (when set) is within limits and ≥
+    // the natural image, so this only ever grows the buffer, padding with the fill byte.
+    if let Some(bits) = config.output_address_bits {
+        bytes.resize(1usize << bits, config.fill_byte);
     }
     Ok(bytes)
 }
@@ -578,7 +587,7 @@ pub fn row_scan_config(
             output_bits,
         },
         output_format: OutputFormatConfig::RawBinary,
-        output_size: None,
+        output_address_bits: None,
         fill_byte: fontspace_model::DEFAULT_FILL_BYTE,
     }
 }
@@ -637,7 +646,7 @@ pub fn column_scan_config(
             output_bits,
         },
         output_format: OutputFormatConfig::RawBinary,
-        output_size: None,
+        output_address_bits: None,
         fill_byte: fontspace_model::DEFAULT_FILL_BYTE,
     }
 }
@@ -729,8 +738,8 @@ mod tests {
         let (mut set, pages) = glyph_set(&mut ids, GlyphSize::new(8, 8), 1);
         draw(&mut set, 0, 0, &[(0, 0), (7, 0)]);
         let mut config = row_scan_config(&mut ids, "rom", &set, pages, 1);
-        // Natural image is 16 bytes; pad to a 64-byte EEPROM with 0xEE.
-        config.output_size = Some(64);
+        // Natural image is 16 bytes (2^4); pad to a 64-byte (2^6) EEPROM with 0xEE.
+        config.output_address_bits = Some(6);
         config.fill_byte = 0xEE;
 
         let summary = validate_export(&set, &config, &Limits::default()).unwrap();
@@ -745,15 +754,15 @@ mod tests {
     }
 
     #[test]
-    fn validate_rejects_a_non_power_of_two_output_size() {
+    fn validate_rejects_an_over_large_output_size() {
         let mut ids = SequentialIdGen::new();
         let (set, pages) = glyph_set(&mut ids, GlyphSize::new(8, 8), 1);
         let mut config = row_scan_config(&mut ids, "rom", &set, pages, 1);
-        config.output_size = Some(48); // not a power of two
+        config.output_address_bits = Some(40); // 2^40 bytes, over the limit
         let err = validate_export(&set, &config, &Limits::default()).unwrap_err();
         assert!(matches!(
             err,
-            ExportError::OutputSizeNotPowerOfTwo { size: 48, .. }
+            ExportError::OutputSizeTooLarge { bits: 40, .. }
         ));
     }
 
@@ -762,12 +771,13 @@ mod tests {
         let mut ids = SequentialIdGen::new();
         let (set, pages) = glyph_set(&mut ids, GlyphSize::new(8, 8), 1);
         let mut config = row_scan_config(&mut ids, "rom", &set, pages, 1);
-        // Natural size is 16 bytes; 8 can't hold it.
-        config.output_size = Some(8);
+        // Natural size is 16 bytes; 2^3 = 8 can't hold it.
+        config.output_address_bits = Some(3);
         let err = validate_export(&set, &config, &Limits::default()).unwrap_err();
         assert!(matches!(
             err,
             ExportError::OutputSizeTooSmall {
+                bits: 3,
                 size: 8,
                 natural: 16,
                 ..
@@ -963,7 +973,7 @@ mod tests {
                 ],
             },
             output_format: OutputFormatConfig::RawBinary,
-            output_size: None,
+            output_address_bits: None,
             fill_byte: fontspace_model::DEFAULT_FILL_BYTE,
         };
 

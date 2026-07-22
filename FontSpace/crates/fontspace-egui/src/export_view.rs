@@ -88,24 +88,22 @@ pub fn show_export_configuration(ui: &mut egui::Ui, state: &mut AppState) {
                     ui.add(egui::DragValue::new(&mut form.code_bits).range(1..=24));
                     ui.end_row();
 
+                    // Output size is a power of two, entered as its exponent (the target
+                    // EEPROM's address-bit count), with the humanized byte size beside it.
+                    // The checkbox toggles padding on/off (off = the natural image size).
                     ui.label("Output size");
-                    egui::ComboBox::from_id_salt(ui.id().with("export_output_size"))
-                        .selected_text(output_size_label(form.output_size))
-                        .show_ui(ui, |ui| {
-                            ui.selectable_value(
-                                &mut form.output_size,
-                                None,
-                                output_size_label(None),
-                            );
-                            for kib in [2u32, 4, 8, 16, 32, 64] {
-                                let bytes = kib * 1024;
-                                ui.selectable_value(
-                                    &mut form.output_size,
-                                    Some(bytes),
-                                    output_size_label(Some(bytes)),
-                                );
-                            }
-                        });
+                    ui.horizontal(|ui| {
+                        let mut pad = form.output_address_bits.is_some();
+                        if ui.checkbox(&mut pad, "pad to 2^").changed() {
+                            form.output_address_bits = pad.then_some(16); // default 64 KiB
+                        }
+                        if let Some(bits) = &mut form.output_address_bits {
+                            ui.add(egui::DragValue::new(bits).range(1..=32));
+                            ui.label(format!("= {}", humanized_size(*bits)));
+                        } else {
+                            ui.weak("natural (image only)");
+                        }
+                    });
                     ui.end_row();
 
                     ui.label("Fill byte");
@@ -222,13 +220,18 @@ fn show_empty_guidance(ui: &mut egui::Ui) {
     });
 }
 
-/// The human label for an output size: "Natural", a whole-KiB size, or a byte count.
-fn output_size_label(size: Option<u32>) -> String {
-    match size {
-        None => "Natural (image only)".to_string(),
-        Some(bytes) if bytes % 1024 == 0 => format!("{} KiB", bytes / 1024),
-        Some(bytes) => format!("{bytes} B"),
+/// A humanized byte size for `2^bits`: e.g. `10 → "1 KiB"`, `16 → "64 KiB"`, `20 → "1 MiB"`.
+fn humanized_size(bits: u8) -> String {
+    // Use the largest binary unit no bigger than the size; the count is then `2^(bits -
+    // unit_bits)`, a whole power-of-two number of B / KiB / MiB / GiB.
+    const UNITS: [(&str, u8); 4] = [("GiB", 30), ("MiB", 20), ("KiB", 10), ("B", 0)];
+    for (unit, unit_bits) in UNITS {
+        if bits >= unit_bits {
+            return format!("{} {unit}", 1u64 << (bits - unit_bits));
+        }
     }
+    // Unreachable — the ("B", 0) unit always matches — but keeps the function total.
+    format!("{} B", 1u64 << bits)
 }
 
 /// The human label for a scan direction.
@@ -236,5 +239,20 @@ fn scan_label(scan: ScanDirection) -> &'static str {
     match scan {
         ScanDirection::Row => "Row (columns on data bits)",
         ScanDirection::Column => "Column (rows on data bits)",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::humanized_size;
+
+    #[test]
+    fn humanized_size_picks_whole_binary_units() {
+        assert_eq!(humanized_size(0), "1 B");
+        assert_eq!(humanized_size(9), "512 B");
+        assert_eq!(humanized_size(10), "1 KiB");
+        assert_eq!(humanized_size(16), "64 KiB");
+        assert_eq!(humanized_size(20), "1 MiB");
+        assert_eq!(humanized_size(30), "1 GiB");
     }
 }

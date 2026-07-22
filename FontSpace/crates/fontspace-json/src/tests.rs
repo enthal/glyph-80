@@ -198,8 +198,8 @@ fn export_doc() -> FontSpace {
             ],
         },
         output_format: OutputFormatConfig::RawBinary,
-        // Non-default output size + fill exercise those fields' round-trip.
-        output_size: Some(4096),
+        // Non-default output size (2^12 = 4096 bytes) + fill exercise the round-trip.
+        output_address_bits: Some(12),
         fill_byte: 0xAA,
     };
 
@@ -226,17 +226,17 @@ fn export_config_round_trips_byte_stable_and_equal() {
 
 #[test]
 fn export_config_without_size_or_fill_loads_with_defaults() {
-    // A document predating output_size/fill_byte must still load: output_size → None,
+    // A document predating output_address_bits/fill_byte must still load: output_address_bits → None,
     // fill_byte → 0xFF (the serde defaults / back-compat contract).
     let json = save(&export_doc());
     let mut value: serde_json::Value = serde_json::from_str(&json).unwrap();
     let config = value["export_configs"][0].as_object_mut().unwrap();
-    config.remove("output_size");
+    config.remove("output_address_bits");
     config.remove("fill_byte");
     let older = serde_json::to_string(&value).unwrap();
 
     let loaded = load(&older).unwrap().document;
-    assert_eq!(loaded.export_configs[0].output_size, None);
+    assert_eq!(loaded.export_configs[0].output_address_bits, None);
     assert_eq!(
         loaded.export_configs[0].fill_byte,
         fontspace_model::DEFAULT_FILL_BYTE

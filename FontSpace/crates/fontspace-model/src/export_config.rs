@@ -27,14 +27,16 @@ pub struct ExportConfig {
     pub data_map: DataMap,
     /// The programmer-file encoding (spec/10 §10.9). v1: `RawBinary`.
     pub output_format: OutputFormatConfig,
-    /// Target output size in **bytes**, or `None` for the natural size (the addressed
-    /// image alone). When set it must be a power of two and no smaller than the natural
-    /// image; the image is padded up to it with [`ExportConfig::fill_byte`] so a smaller
-    /// ROM fills a larger EEPROM (spec/10 §10.9).
-    pub output_size: Option<u32>,
+    /// Target output size as a **power of two**, given as its exponent — the number of
+    /// address bits of the target EEPROM, so the size in bytes is `2^output_address_bits`
+    /// (e.g. `16` → 64 KiB, `20` → 1 MiB). `None` uses the natural size (the addressed
+    /// image alone). When set it must be no smaller than the natural image; the image is
+    /// padded up to it with [`ExportConfig::fill_byte`] so a smaller ROM fills a larger
+    /// EEPROM (spec/10 §10.9).
+    pub output_address_bits: Option<u8>,
     /// The byte written to any output address not produced by the image — the padding up
-    /// to `output_size` (and, once memory-mapping lands, address holes). Defaults to
-    /// `0xFF`, the erased-EEPROM value.
+    /// to `output_address_bits` (and, once memory-mapping lands, address holes). Defaults
+    /// to `0xFF`, the erased-EEPROM value.
     pub fill_byte: u8,
 }
 

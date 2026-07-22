@@ -64,9 +64,10 @@ pub struct ExportConfigForm {
     pub glyph_set_id: GlyphSetId,
     pub scan: ScanDirection,
     pub code_bits: u8,
-    /// Target output size in bytes, or `None` for the natural size (spec/10 §10.9).
-    pub output_size: Option<u32>,
-    /// Padding byte for [`output_size`](Self::output_size).
+    /// Target output size as a power-of-two exponent (address bits), or `None` for the
+    /// natural size (spec/10 §10.9).
+    pub output_address_bits: Option<u8>,
+    /// Padding byte for [`output_address_bits`](Self::output_address_bits).
     pub fill_byte: u8,
 }
 
@@ -1061,7 +1062,7 @@ impl AppState {
             config.address_map.id = existing.address_map.id;
             config.data_map.id = existing.data_map.id;
             config.description = existing.description.clone();
-            config.output_size = form.output_size;
+            config.output_address_bits = form.output_address_bits;
             config.fill_byte = form.fill_byte;
             config
         };
@@ -1723,7 +1724,7 @@ fn form_from_config(config: &ExportConfig) -> ExportConfigForm {
         glyph_set_id: config.source.glyph_set_id,
         scan,
         code_bits,
-        output_size: config.output_size,
+        output_address_bits: config.output_address_bits,
         fill_byte: config.fill_byte,
     }
 }
@@ -2871,17 +2872,20 @@ mod tests {
         {
             let form = state.export_form_mut().unwrap();
             // The preset default is the natural size + erased-EEPROM fill.
-            assert_eq!(form.output_size, None);
+            assert_eq!(form.output_address_bits, None);
             assert_eq!(form.fill_byte, fontspace_model::DEFAULT_FILL_BYTE);
-            form.output_size = Some(8192);
+            form.output_address_bits = Some(13); // 2^13 = 8 KiB
             form.fill_byte = 0x00;
         }
         state.apply_export_form();
-        assert_eq!(state.document().export_configs[0].output_size, Some(8192));
+        assert_eq!(
+            state.document().export_configs[0].output_address_bits,
+            Some(13)
+        );
         assert_eq!(state.document().export_configs[0].fill_byte, 0x00);
         // The saved values read back into the (re-synced) form.
         let form = state.export_form_mut().unwrap();
-        assert_eq!(form.output_size, Some(8192));
+        assert_eq!(form.output_address_bits, Some(13));
         assert_eq!(form.fill_byte, 0x00);
     }
 
