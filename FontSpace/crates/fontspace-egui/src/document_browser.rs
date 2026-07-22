@@ -7,16 +7,17 @@
 //! walks it. Create/rename/duplicate/delete/reorder and drag-between-files arrive in
 //! later slices.
 
-use fontspace_model::{ExportConfigId, FontSpace, GlyphSetId, PageId};
+use fontspace_model::{ExportConfigId, FontSpace, GlyphSetId, GlyphSize, PageId};
 
-use crate::state::AppState;
+use crate::state::{AppState, RenameTarget};
 use crate::workspace::DocumentId;
 
-/// One glyph set in the browser: its id, name, and pages in document order.
+/// One glyph set in the browser: its id, name, geometry, and pages in document order.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GlyphSetNode {
     pub id: GlyphSetId,
     pub name: String,
+    pub glyph_size: GlyphSize,
     pub pages: Vec<PageNode>,
 }
 
@@ -58,6 +59,7 @@ pub fn browser_model(document: &FontSpace) -> BrowserModel {
             .map(|gs| GlyphSetNode {
                 id: gs.id,
                 name: gs.name.clone(),
+                glyph_size: gs.glyph_size,
                 pages: gs
                     .pages
                     .iter()
@@ -89,6 +91,25 @@ struct DocumentEntry {
     model: BrowserModel,
 }
 
+/// A create/rename/duplicate/delete/move action chosen from a right-click context menu
+/// (spec/12 §12.2). Collected during render (which holds a document borrow) and applied
+/// against `&mut state` afterwards. Only offered on the **active** document, so each
+/// applies to the active document's content. Names are resolved at menu time.
+enum BrowserAction {
+    AddPage(GlyphSetId, String),
+    RenameGlyphSet(GlyphSetId),
+    DuplicateGlyphSet(GlyphSetId, String),
+    RemoveGlyphSet(GlyphSetId),
+    RenamePage(GlyphSetId, PageId),
+    DuplicatePage(GlyphSetId, PageId, String),
+    RemovePage(GlyphSetId, PageId),
+    MovePage {
+        from: GlyphSetId,
+        page: PageId,
+        to: GlyphSetId,
+    },
+}
+
 /// Renders the document browser — every open file as a collapsing tree — and applies a
 /// page click: switch to that file (if it isn't active) and select the page.
 pub fn show_document_browser(ui: &mut egui::Ui, state: &mut AppState) {
@@ -106,6 +127,7 @@ pub fn show_document_browser(ui: &mut egui::Ui, state: &mut AppState) {
 
     let mut clicked: Option<(DocumentId, GlyphSetId, PageId)> = None;
     let mut clicked_export: Option<(DocumentId, ExportConfigId)> = None;
+    let mut actions: Vec<BrowserAction> = Vec::new();
     // `ui.id()` is seeded with this tile's id, so salting from it keeps every widget id
     // unique even when the browser is open in two tiles at once (spec/12 §12.1).
     egui::ScrollArea::vertical()
@@ -128,6 +150,7 @@ pub fn show_document_browser(ui: &mut egui::Ui, state: &mut AppState) {
                             selected_export,
                             &mut clicked,
                             &mut clicked_export,
+                            &mut actions,
                         );
                     });
             }
@@ -141,6 +164,28 @@ pub fn show_document_browser(ui: &mut egui::Ui, state: &mut AppState) {
         state.switch_to(document_id);
         state.select_export_config(export_config_id);
     }
+    // Context-menu actions were only offered on the active document, so they apply to the
+    // active document's content (spec/12 §12.2). Each is one undo entry.
+    for action in actions {
+        match action {
+            BrowserAction::AddPage(glyph_set, name) => state.add_page(glyph_set, name),
+            BrowserAction::RenameGlyphSet(glyph_set) => {
+                state.begin_rename(RenameTarget::GlyphSet(glyph_set))
+            }
+            BrowserAction::DuplicateGlyphSet(glyph_set, name) => {
+                state.duplicate_glyph_set(glyph_set, name)
+            }
+            BrowserAction::RemoveGlyphSet(glyph_set) => state.remove_glyph_set(glyph_set),
+            BrowserAction::RenamePage(glyph_set, page) => {
+                state.begin_rename(RenameTarget::Page(glyph_set, page))
+            }
+            BrowserAction::DuplicatePage(glyph_set, page, name) => {
+                state.duplicate_page(glyph_set, page, name)
+            }
+            BrowserAction::RemovePage(glyph_set, page) => state.remove_page(glyph_set, page),
+            BrowserAction::MovePage { from, page, to } => state.move_page(from, page, to),
+        }
+    }
 }
 
 /// Renders one document's object tree (spec/12 §12.2); page clicks are recorded into
@@ -153,6 +198,7 @@ fn show_document_tree(
     selected_export: Option<ExportConfigId>,
     clicked: &mut Option<(DocumentId, GlyphSetId, PageId)>,
     clicked_export: &mut Option<(DocumentId, ExportConfigId)>,
+    actions: &mut Vec<BrowserAction>,
 ) {
     let model = &document.model;
     section(ui, "Character Sets", "character_sets", |ui| {
@@ -164,7 +210,7 @@ fn show_document_tree(
             ui.weak("(none)");
         }
         for glyph_set in &model.glyph_sets {
-            egui::CollapsingHeader::new(&glyph_set.name)
+            let header = egui::CollapsingHeader::new(&glyph_set.name)
                 .id_salt(ui.id().with(glyph_set.id.as_uuid()))
                 .default_open(true)
                 .show(ui, |ui| {
@@ -175,11 +221,48 @@ fn show_document_tree(
                         let selected = document.active
                             && selection.glyph_set_id == glyph_set.id
                             && selection.page_id == page.id;
-                        if ui.selectable_label(selected, &page.name).clicked() {
+                        let response = ui.selectable_label(selected, &page.name);
+                        if response.clicked() {
                             *clicked = Some((document.id, glyph_set.id, page.id));
+                        }
+                        // Page context menu (active document only): rename / duplicate /
+                        // move to a same-geometry glyph set / delete.
+                        if document.active {
+                            response.context_menu(|ui| {
+                                page_context_menu(ui, model, glyph_set, page, actions);
+                            });
                         }
                     }
                 });
+            // Glyph-set context menu (active document only): add page / rename / duplicate
+            // / delete.
+            if document.active {
+                header.header_response.context_menu(|ui| {
+                    if ui.button("Add page").clicked() {
+                        actions.push(BrowserAction::AddPage(
+                            glyph_set.id,
+                            format!("Page {}", glyph_set.pages.len() + 1),
+                        ));
+                        ui.close();
+                    }
+                    if ui.button("Rename…").clicked() {
+                        actions.push(BrowserAction::RenameGlyphSet(glyph_set.id));
+                        ui.close();
+                    }
+                    if ui.button("Duplicate").clicked() {
+                        actions.push(BrowserAction::DuplicateGlyphSet(
+                            glyph_set.id,
+                            format!("{} copy", glyph_set.name),
+                        ));
+                        ui.close();
+                    }
+                    ui.separator();
+                    if ui.button("Delete").clicked() {
+                        actions.push(BrowserAction::RemoveGlyphSet(glyph_set.id));
+                        ui.close();
+                    }
+                });
+            }
         }
     });
 
@@ -194,6 +277,54 @@ fn show_document_tree(
             }
         }
     });
+}
+
+/// The right-click menu for a page (spec/12 §12.2): rename, duplicate, move to another
+/// glyph set of the **same geometry**, or delete.
+fn page_context_menu(
+    ui: &mut egui::Ui,
+    model: &BrowserModel,
+    glyph_set: &GlyphSetNode,
+    page: &PageNode,
+    actions: &mut Vec<BrowserAction>,
+) {
+    if ui.button("Rename…").clicked() {
+        actions.push(BrowserAction::RenamePage(glyph_set.id, page.id));
+        ui.close();
+    }
+    if ui.button("Duplicate").clicked() {
+        actions.push(BrowserAction::DuplicatePage(
+            glyph_set.id,
+            page.id,
+            format!("{} copy", page.name),
+        ));
+        ui.close();
+    }
+    ui.menu_button("Move to glyph set", |ui| {
+        let targets: Vec<&GlyphSetNode> = model
+            .glyph_sets
+            .iter()
+            .filter(|target| target.id != glyph_set.id && target.glyph_size == glyph_set.glyph_size)
+            .collect();
+        if targets.is_empty() {
+            ui.weak("(no other same-size glyph set)");
+        }
+        for target in targets {
+            if ui.button(&target.name).clicked() {
+                actions.push(BrowserAction::MovePage {
+                    from: glyph_set.id,
+                    page: page.id,
+                    to: target.id,
+                });
+                ui.close();
+            }
+        }
+    });
+    ui.separator();
+    if ui.button("Delete").clicked() {
+        actions.push(BrowserAction::RemovePage(glyph_set.id, page.id));
+        ui.close();
+    }
 }
 
 /// A default-open collapsing section, salted so two browser tiles don't collide.
