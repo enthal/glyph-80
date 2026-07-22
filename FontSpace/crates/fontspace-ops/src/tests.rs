@@ -11,14 +11,15 @@ use crate::apply_change_set;
 use crate::change_set::{ChangeSet, GlyphSetChange, ObjectChange};
 use crate::{
     AddCharacterEntry, AddExportConfig, AddGlyphSet, AddGuide, AddPage, ClearGlyphs,
-    CopyGuideToPages, FontSpaceError, FontSpaceWarning, GlyphRef, GlyphSelector, InvertGlyphs,
-    MoveGuide, PageSelector, PixelEdit, RecodeCharacterEntry, RemoveCharacterEntry, RemoveGuide,
-    RemovePages, RenameGuide, ReorderCharacterEntries, ReorderPages, ReplaceExportConfig,
-    SetGuideVisible, SetPixels, ShiftGlyphs, add_character_entry, add_export_config, add_glyph_set,
-    add_guide, add_page, clear_glyphs, copy_guide_to_pages, invert_glyphs, move_guide,
-    recode_character_entry, remove_character_entry, remove_guide, remove_pages, rename_guide,
-    reorder_character_entries, reorder_pages, replace_export_config, set_guide_visible, set_pixels,
-    shift_glyphs, undo,
+    CopyGuideToPages, DuplicateGlyphSet, FontSpaceError, FontSpaceWarning, GlyphRef, GlyphSelector,
+    InvertGlyphs, MoveGuide, PageSelector, PixelEdit, RecodeCharacterEntry, RemoveCharacterEntry,
+    RemoveGlyphSet, RemoveGuide, RemovePages, RenameGlyphSet, RenameGuide, ReorderCharacterEntries,
+    ReorderPages, ReplaceExportConfig, SetGuideVisible, SetPixels, ShiftGlyphs,
+    add_character_entry, add_export_config, add_glyph_set, add_guide, add_page, clear_glyphs,
+    copy_guide_to_pages, duplicate_glyph_set, invert_glyphs, move_guide, recode_character_entry,
+    remove_character_entry, remove_glyph_set, remove_guide, remove_pages, rename_glyph_set,
+    rename_guide, reorder_character_entries, reorder_pages, replace_export_config,
+    set_guide_visible, set_pixels, shift_glyphs, undo,
 };
 
 struct Fixture {
@@ -1333,6 +1334,86 @@ fn replace_export_config_swaps_in_place_and_undo_restores() {
     undo(&mut f.doc, &change_set).unwrap();
     assert_eq!(f.doc.export_configs[0].id, id);
     assert_eq!(f.doc.export_configs[0].name, "ROM");
+}
+
+#[test]
+fn rename_glyph_set_changes_the_name_and_undo_restores() {
+    let mut f = fixture();
+    let change_set = rename_glyph_set(
+        &mut f.doc,
+        &RenameGlyphSet {
+            glyph_set_id: f.glyph_set,
+            name: "Renamed".into(),
+        },
+    )
+    .unwrap();
+    assert_eq!(f.doc.glyph_sets[0].name, "Renamed");
+    undo(&mut f.doc, &change_set).unwrap();
+    assert_eq!(f.doc.glyph_sets[0].name, "gs");
+}
+
+#[test]
+fn rename_glyph_set_to_the_same_name_is_a_noop() {
+    let mut f = fixture();
+    let change_set = rename_glyph_set(
+        &mut f.doc,
+        &RenameGlyphSet {
+            glyph_set_id: f.glyph_set,
+            name: "gs".into(),
+        },
+    )
+    .unwrap();
+    assert!(change_set.is_empty(), "unchanged name records nothing");
+}
+
+#[test]
+fn remove_glyph_set_and_undo_restores_it_whole() {
+    let mut f = fixture();
+    let before = f.doc.glyph_sets[0].clone();
+    let change_set = remove_glyph_set(
+        &mut f.doc,
+        &RemoveGlyphSet {
+            glyph_set_id: f.glyph_set,
+        },
+    )
+    .unwrap();
+    assert!(f.doc.glyph_sets.is_empty());
+    undo(&mut f.doc, &change_set).unwrap();
+    assert_eq!(f.doc.glyph_sets.len(), 1);
+    assert_eq!(
+        f.doc.glyph_sets[0], before,
+        "restored with its pages and glyphs"
+    );
+}
+
+#[test]
+fn duplicate_glyph_set_mints_fresh_ids_after_the_original() {
+    let mut f = fixture();
+    let change_set = duplicate_glyph_set(
+        &mut f.doc,
+        &DuplicateGlyphSet {
+            glyph_set_id: f.glyph_set,
+            name: "Copy".into(),
+        },
+        &mut f.ids,
+    )
+    .unwrap();
+    assert_eq!(f.doc.glyph_sets.len(), 2);
+    let (orig, copy) = (&f.doc.glyph_sets[0], &f.doc.glyph_sets[1]);
+    assert_eq!(copy.name, "Copy");
+    assert_ne!(copy.id, orig.id, "fresh glyph-set id");
+    assert_eq!(copy.glyph_size, orig.glyph_size);
+    assert_eq!(
+        copy.character_set_id, orig.character_set_id,
+        "the copy references the same character set"
+    );
+    assert_eq!(copy.pages.len(), orig.pages.len());
+    // Pages get fresh ids but copy their glyphs verbatim (glyphs are keyed by code).
+    assert_ne!(copy.pages[0].id, orig.pages[0].id, "fresh page id");
+    assert_eq!(copy.pages[0].glyphs, orig.pages[0].glyphs);
+
+    undo(&mut f.doc, &change_set).unwrap();
+    assert_eq!(f.doc.glyph_sets.len(), 1);
 }
 
 #[test]
