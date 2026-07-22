@@ -182,11 +182,11 @@ enum Command {
         /// or `column` (spec/10 §10.4).
         #[arg(long, default_value = "row")]
         scan: String,
-        /// Pad the image to this many bytes (a power of two, ≥ the natural size) with the
-        /// fill byte, to fill a larger EEPROM (spec/10 §10.9). Accepts `0x`-hex. Omit for
-        /// the natural size.
+        /// Pad the image to `2^N` bytes (N = the target EEPROM's address-bit count, so
+        /// 16 → 64 KiB) with the fill byte, to fill a larger EEPROM (spec/10 §10.9). Must
+        /// be ≥ the natural size. Omit for the natural size.
         #[arg(long)]
-        output_size: Option<String>,
+        output_address_bits: Option<u8>,
         /// Byte written to padding (and, later, address holes). Accepts `0x`-hex;
         /// defaults to 0xFF (erased EEPROM).
         #[arg(long)]
@@ -253,16 +253,6 @@ enum CliError {
     OutputRequired,
     #[error("{0:?} is not a valid number (use decimal or 0x-hex)")]
     BadNumber(String),
-}
-
-/// Parses an unsigned integer from decimal or `0x`-hex text (CLI numeric flags).
-fn parse_u32(text: &str) -> Result<u32, CliError> {
-    let text = text.trim();
-    match text.strip_prefix("0x").or_else(|| text.strip_prefix("0X")) {
-        Some(hex) => u32::from_str_radix(hex, 16),
-        None => text.parse::<u32>(),
-    }
-    .map_err(|_| CliError::BadNumber(text.to_string()))
 }
 
 /// Parses a byte from decimal or `0x`-hex text (e.g. `--fill-byte 0xFF`).
@@ -506,12 +496,11 @@ fn run(cli: Cli) -> Result<(), CliError> {
             pages,
             code_bits,
             scan,
-            output_size,
+            output_address_bits,
             fill_byte,
         } => {
             let mut doc = load_document(&path)?;
             let glyph_set_id = resolve_glyph_set(&doc, &glyph_set)?;
-            let output_size = output_size.as_deref().map(parse_u32).transpose()?;
             let fill_byte = match fill_byte.as_deref() {
                 Some(text) => parse_u8(text)?,
                 None => fontspace_model::DEFAULT_FILL_BYTE,
@@ -526,7 +515,7 @@ fn run(cli: Cli) -> Result<(), CliError> {
                     "column" => column_scan_config(ids.as_mut(), &name, gs, page_ids, code_bits),
                     other => return Err(CliError::UnknownScan(other.to_string())),
                 };
-                config.output_size = output_size;
+                config.output_address_bits = output_address_bits;
                 config.fill_byte = fill_byte;
                 config
             };
