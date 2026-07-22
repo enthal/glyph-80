@@ -3,7 +3,8 @@
 
 use fontspace_model::{
     Bitmap, CharacterEntry, CharacterSet, CharacterSetId, FontSpace, Glyph, GlyphPage, GlyphSet,
-    GlyphSetId, GlyphSize, GuideAxis, OverflowPolicy, PageId, SequentialIdGen,
+    GlyphSetId, GlyphSize, Guide, GuideAxis, GuideId, Limits, OverflowPolicy, PageId,
+    SequentialIdGen,
 };
 use proptest::prelude::*;
 
@@ -1389,6 +1390,17 @@ fn remove_glyph_set_and_undo_restores_it_whole() {
 #[test]
 fn duplicate_glyph_set_mints_fresh_ids_after_the_original() {
     let mut f = fixture();
+    // Give the Regular page a guide so the copy's guide re-minting is exercised, and the
+    // duplicated document must still validate (no duplicate page/guide ids).
+    f.doc.glyph_sets[0].pages[0].guides.push(Guide {
+        id: GuideId::new(&mut f.ids),
+        name: "baseline".into(),
+        axis: GuideAxis::Horizontal,
+        position: 6,
+        visible: true,
+        locked: false,
+    });
+
     let change_set = duplicate_glyph_set(
         &mut f.doc,
         &DuplicateGlyphSet {
@@ -1408,9 +1420,19 @@ fn duplicate_glyph_set_mints_fresh_ids_after_the_original() {
         "the copy references the same character set"
     );
     assert_eq!(copy.pages.len(), orig.pages.len());
-    // Pages get fresh ids but copy their glyphs verbatim (glyphs are keyed by code).
-    assert_ne!(copy.pages[0].id, orig.pages[0].id, "fresh page id");
-    assert_eq!(copy.pages[0].glyphs, orig.pages[0].glyphs);
+    // Every page gets a fresh id but copies its glyphs verbatim (glyphs are keyed by code).
+    for (orig_page, copy_page) in orig.pages.iter().zip(&copy.pages) {
+        assert_ne!(copy_page.id, orig_page.id, "fresh page id");
+        assert_eq!(copy_page.glyphs, orig_page.glyphs);
+    }
+    // The guide is re-minted too — distinct id, same content.
+    assert_ne!(copy.pages[0].guides[0].id, orig.pages[0].guides[0].id);
+    assert_eq!(copy.pages[0].guides[0].name, orig.pages[0].guides[0].name);
+    // No id collides, so the whole document is valid.
+    assert!(
+        f.doc.validate(&Limits::default()).is_valid(),
+        "the duplicated document validates with no duplicate ids"
+    );
 
     undo(&mut f.doc, &change_set).unwrap();
     assert_eq!(f.doc.glyph_sets.len(), 1);
