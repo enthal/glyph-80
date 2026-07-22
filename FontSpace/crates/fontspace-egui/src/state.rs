@@ -11,7 +11,8 @@
 use std::path::{Path, PathBuf};
 
 use fontspace_export::{
-    ExportError, ExportSummary, ScanDirection, column_scan_config, row_scan_config, validate_export,
+    ExportError, ExportSummary, ScanDirection, column_scan_config, encode_raw_binary,
+    generate_image, row_scan_config, validate_export,
 };
 use fontspace_json::{LoadOutcome, load_fragment, save_fragment};
 use fontspace_model::{
@@ -842,6 +843,33 @@ impl AppState {
             }));
         };
         Some(validate_export(glyph_set, config, &Limits::default()))
+    }
+
+    /// Renders the **selected** export config to raw ROM bytes (spec/10 §10.9) for the
+    /// GUI's "Export to file" action. Validates first — never emits bytes from a non-1:1
+    /// config — then generates the logical image and encodes it. Returns a human-readable
+    /// error for the status strip on any failure. The GUI writes the bytes itself (an
+    /// output artifact, not a document — spec/13 §13.1).
+    pub fn export_selected_bytes(&self) -> Result<Vec<u8>, String> {
+        let id = self
+            .selected_export_config()
+            .ok_or("No export configuration selected")?;
+        let config = self
+            .active
+            .content
+            .export_configs
+            .iter()
+            .find(|config| config.id == id)
+            .ok_or("Export configuration no longer exists")?;
+        let glyph_set = self
+            .active
+            .content
+            .glyph_set(config.source.glyph_set_id)
+            .ok_or("Export source glyph set is missing")?;
+        let limits = Limits::default();
+        let summary = validate_export(glyph_set, config, &limits).map_err(|err| err.to_string())?;
+        let image = generate_image(glyph_set, config, &limits).map_err(|err| err.to_string())?;
+        Ok(encode_raw_binary(&image, summary.data_bits))
     }
 
     /// Records a committed change to the **active** document on the undo stack
@@ -2499,6 +2527,23 @@ mod tests {
         state.undo();
         assert_eq!(state.document().export_configs[0].name, "ROM");
         assert_eq!(state.document().export_configs[0].id, id);
+    }
+
+    #[test]
+    fn export_selected_bytes_renders_the_rom_image() {
+        let mut state = editable_state();
+        state.add_export_config("ROM".to_string());
+        // Starter is 8×8 with codes up to 0x48 → 3 row bits + 7 code bits = 10 address
+        // bits → 1024 one-byte words.
+        let bytes = state.export_selected_bytes().expect("valid config renders");
+        assert_eq!(bytes.len(), 1024);
+    }
+
+    #[test]
+    fn export_selected_bytes_errors_when_nothing_selected() {
+        let state = editable_state();
+        assert!(state.selected_export_config().is_none());
+        assert!(state.export_selected_bytes().is_err());
     }
 
     #[test]

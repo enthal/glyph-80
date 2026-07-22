@@ -1,6 +1,7 @@
 //! The Export Configuration tile (spec/12 §12.11/§12.12, spec/10): a form over the
 //! selected export config's high-level parameters — name, source glyph set, scan
-//! direction, and code-bits — plus a live 1:1 validation summary.
+//! direction, and code-bits — plus a live 1:1 validation summary and an
+//! **Export to file** action that writes the raw ROM image (spec/13 §13.1).
 //!
 //! The view owns no export semantics (CLAUDE.md "the one architectural rule"): it edits
 //! a working [`ExportConfigForm`] on [`AppState`] and, on **Apply**, has the state
@@ -122,20 +123,56 @@ pub fn show_export_configuration(ui: &mut egui::Ui, state: &mut AppState) {
     show_validation(ui, state);
 }
 
-/// The live 1:1 validation summary of the selected (saved) config, or its diagnostic.
-fn show_validation(ui: &mut egui::Ui, state: &AppState) {
+/// The live 1:1 validation summary of the selected (saved) config, or its diagnostic,
+/// followed by the "Export to file" action (enabled only when the config is valid).
+fn show_validation(ui: &mut egui::Ui, state: &mut AppState) {
     ui.strong("Validation");
     ui.add_space(2.0);
-    match state.validate_selected_export() {
+    let valid = match state.validate_selected_export() {
         Some(Ok(summary)) => {
             ui.label(egui::RichText::new(summary.to_string()).monospace());
+            true
         }
         Some(Err(err)) => {
             ui.colored_label(ui.visuals().error_fg_color, err.to_string());
+            false
         }
         None => {
             ui.weak("(nothing to validate)");
+            false
         }
+    };
+
+    ui.add_space(6.0);
+    if ui
+        .add_enabled(valid, egui::Button::new("Export to file…"))
+        .on_hover_text("Write the raw ROM image to a .bin file")
+        .clicked()
+    {
+        export_to_file(state);
+    }
+}
+
+/// Renders the selected config to bytes and writes them to a user-chosen `.bin` (spec/10
+/// §10.9, spec/13 §13.1). The native save dialog runs only on the click, never in tests.
+fn export_to_file(state: &mut AppState) {
+    let bytes = match state.export_selected_bytes() {
+        Ok(bytes) => bytes,
+        Err(message) => {
+            state.set_error(message);
+            return;
+        }
+    };
+    let Some(path) = rfd::FileDialog::new()
+        .add_filter("ROM image", &["bin"])
+        .set_file_name("rom.bin")
+        .save_file()
+    else {
+        return; // dialog cancelled
+    };
+    match std::fs::write(&path, &bytes) {
+        Ok(()) => state.set_status(format!("Wrote {} bytes to {}", bytes.len(), path.display())),
+        Err(err) => state.set_error(format!("Export failed: {err}")),
     }
 }
 
